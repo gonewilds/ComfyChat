@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, memo } from 'react';
-import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download } from 'lucide-react';
+import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download, X } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
@@ -7,12 +7,13 @@ import { parseWorkflow, prepareWorkflow, getImageUrl, getBaseUrl } from '../util
 import { ChatMessage } from '../types';
 
 // Memoized Image Component to handle Blob URLs efficiently
-const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: { 
+const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge }: { 
   blob?: Blob, 
   url?: string, 
   alt: string,
   onFavorite: () => void,
-  onGenerateMore: () => void
+  onGenerateMore: () => void,
+  onEnlarge: (src: string) => void
 }) => {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
 
@@ -26,7 +27,8 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: {
 
   const src = objectUrl || url;
 
-  const handleDownload = () => {
+  const handleDownload = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!src) return;
     const a = document.createElement('a');
     a.href = src;
@@ -36,6 +38,16 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: {
     document.body.removeChild(a);
   };
 
+  const handleFavoriteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onFavorite();
+  };
+
+  const handleGenerateClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onGenerateMore();
+  };
+
   if (!src) return null;
 
   return (
@@ -43,7 +55,8 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: {
       <img 
         src={src} 
         alt={alt} 
-        className="max-w-full md:max-w-sm lg:max-w-md h-auto block"
+        className="max-w-full md:max-w-sm lg:max-w-md h-auto block cursor-zoom-in"
+        onClick={() => onEnlarge(src)}
       />
       
       {/* Action Bar on Image */}
@@ -56,7 +69,7 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: {
           <Download className="w-5 h-5" />
         </button>
         <button 
-          onClick={onFavorite}
+          onClick={handleFavoriteClick}
           className="bg-black/50 hover:bg-yellow-500/80 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
           title="Add to Favorites"
         >
@@ -66,7 +79,7 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: {
 
       <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex justify-center">
         <button
-          onClick={onGenerateMore}
+          onClick={handleGenerateClick}
           className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-full shadow-lg transition-transform hover:scale-105"
         >
           <RefreshCw className="w-3 h-3" />
@@ -121,6 +134,8 @@ export const Chat: React.FC = () => {
   
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [enlargedSrc, setEnlargedSrc] = useState<string | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const clientId = useRef(uuidv4());
@@ -439,6 +454,7 @@ export const Chat: React.FC = () => {
                      alt="Generated Image"
                      onFavorite={() => handleFavorite(msg)}
                      onGenerateMore={() => msg.id && handleGenerateMore(msg.id)}
+                     onEnlarge={setEnlargedSrc}
                    />
                 )}
               </div>
@@ -483,6 +499,27 @@ export const Chat: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Lightbox Modal */}
+      {enlargedSrc && (
+        <div 
+          className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setEnlargedSrc(null)}
+        >
+             <button 
+                onClick={() => setEnlargedSrc(null)}
+                className="absolute top-4 right-4 p-2 text-white/70 hover:text-white transition-colors z-50"
+             >
+               <X className="w-10 h-10" />
+             </button>
+             <img 
+               src={enlargedSrc} 
+               alt="Full size" 
+               className="max-w-full max-h-full object-contain rounded shadow-2xl cursor-default"
+               onClick={(e) => e.stopPropagation()} 
+             />
+        </div>
+      )}
     </div>
   );
 };
