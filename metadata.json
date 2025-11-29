@@ -1,0 +1,5 @@
+{
+  "name": "ComfyChat",
+  "description": "A Discord-style interface for generating images via ComfyUI API, featuring chat-based prompting, gallery management, and local storage.",
+  "requestFramePermissions": []
+}
