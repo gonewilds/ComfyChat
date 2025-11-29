@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, memo } from 'react';
-import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings } from 'lucide-react';
+import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
@@ -26,6 +26,16 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: {
 
   const src = objectUrl || url;
 
+  const handleDownload = () => {
+    if (!src) return;
+    const a = document.createElement('a');
+    a.href = src;
+    a.download = `comfy-generated-${Date.now()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   if (!src) return null;
 
   return (
@@ -37,7 +47,14 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: {
       />
       
       {/* Action Bar on Image */}
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="absolute top-2 right-2 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+        <button 
+          onClick={handleDownload}
+          className="bg-black/50 hover:bg-gray-700 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
+          title="Download"
+        >
+          <Download className="w-5 h-5" />
+        </button>
         <button 
           onClick={onFavorite}
           className="bg-black/50 hover:bg-yellow-500/80 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
@@ -47,7 +64,7 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: {
         </button>
       </div>
 
-      <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex justify-center">
+      <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex justify-center">
         <button
           onClick={onGenerateMore}
           className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-full shadow-lg transition-transform hover:scale-105"
@@ -69,13 +86,14 @@ export const Chat: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const clientId = useRef(uuidv4());
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-scroll to bottom
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, isGenerating]);
 
   // Establish WebSocket connection
   useEffect(() => {
@@ -175,6 +193,14 @@ export const Chat: React.FC = () => {
     };
   }, [settings]);
 
+  // Adjust textarea height
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
+    }
+  }, [input]);
+
   const handleSend = async (promptText: string) => {
     if (!promptText.trim()) return;
     if (!settings || settings.length === 0) {
@@ -199,6 +225,7 @@ export const Chat: React.FC = () => {
     });
     
     setInput('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'; // Reset height
     setIsGenerating(true);
 
     try {
@@ -353,7 +380,7 @@ export const Chat: React.FC = () => {
               </div>
 
               {/* Bubble */}
-              <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+              <div className={`flex flex-col max-w-[85%] md:max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                 <div className="flex items-baseline gap-2 mb-1">
                   <span className="font-semibold text-white">
                     {msg.role === 'user' ? 'You' : 'ComfyBot'}
@@ -394,13 +421,14 @@ export const Chat: React.FC = () => {
       </div>
 
       {/* Input Area */}
-      <div className="p-4 bg-[#383a40] flex-shrink-0">
-        <div className="bg-[#404249] rounded-lg p-2 flex items-center gap-2">
-          <input
-            type="text"
-            className="flex-1 bg-transparent text-gray-100 placeholder-gray-400 focus:outline-none px-2"
+      <div className="p-3 md:p-4 bg-[#383a40] flex-shrink-0 border-t border-[#26272d]">
+        <div className="bg-[#404249] rounded-lg p-2 flex items-end gap-2">
+          <textarea
+            ref={textareaRef}
+            className="flex-1 bg-transparent text-gray-100 placeholder-gray-400 focus:outline-none px-2 py-2 resize-none max-h-32 min-h-[44px]"
             placeholder={isGenerating ? "Wait for generation to finish..." : "Type a prompt..."}
             value={input}
+            rows={1}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !isGenerating) {
@@ -413,9 +441,9 @@ export const Chat: React.FC = () => {
           <button
             onClick={() => handleSend(input)}
             disabled={isGenerating || !input.trim()}
-            className="p-2 text-gray-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="p-2 mb-0.5 text-gray-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            <Send className="w-5 h-5" />
+            <Send className="w-6 h-6" />
           </button>
         </div>
       </div>

@@ -27,7 +27,8 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="flex h-screen bg-[#1e1f22]">
+    // Use h-[100dvh] to correctly handle mobile browser address bars
+    <div className="flex h-[100dvh] bg-[#1e1f22]">
       {/* Sidebar (Desktop) */}
       <div className="hidden md:flex flex-col w-64 bg-[#2b2d31] p-3 gap-2">
         <div className="mb-4 px-3 py-2">
@@ -41,7 +42,7 @@ const App: React.FC = () => {
       {/* Main Content */}
       <div className="flex-1 flex flex-col relative overflow-hidden">
         {/* Mobile Header */}
-        <div className="md:hidden flex items-center justify-between p-4 bg-[#2b2d31] shadow-sm z-20">
+        <div className="md:hidden flex items-center justify-between p-4 bg-[#2b2d31] shadow-sm z-20 flex-shrink-0">
           <h1 className="text-indigo-400 font-bold text-lg">ComfyChat</h1>
           <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="text-gray-200">
             {mobileMenuOpen ? <X /> : <Menu />}
@@ -58,12 +59,12 @@ const App: React.FC = () => {
         )}
 
         {/* Content Area */}
-        <div className="flex-1 overflow-hidden relative h-full">
+        <div className="flex-1 overflow-hidden relative h-full flex flex-col">
           {/* 
              Fix: Keep Chat mounted to preserve WebSocket and generating state.
              We use display: none (via 'hidden' class) instead of unmounting.
           */}
-          <div className={view === 'chat' ? 'h-full block' : 'hidden'}>
+          <div className={`flex-1 overflow-hidden flex flex-col ${view === 'chat' ? 'h-full' : 'hidden h-0'}`}>
             <Chat />
           </div>
           
