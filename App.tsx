@@ -58,8 +58,15 @@ const App: React.FC = () => {
         )}
 
         {/* Content Area */}
-        <div className="flex-1 overflow-hidden relative">
-          {view === 'chat' && <Chat />}
+        <div className="flex-1 overflow-hidden relative h-full">
+          {/* 
+             Fix: Keep Chat mounted to preserve WebSocket and generating state.
+             We use display: none (via 'hidden' class) instead of unmounting.
+          */}
+          <div className={view === 'chat' ? 'h-full block' : 'hidden'}>
+            <Chat />
+          </div>
+          
           {view === 'gallery' && <Gallery />}
           {view === 'settings' && <SettingsPanel />}
         </div>

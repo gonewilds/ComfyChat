@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { db } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Save, AlertCircle, Wifi, CheckCircle, XCircle, Key } from 'lucide-react';
+import { Save, AlertCircle, Wifi, CheckCircle, XCircle, Key, RefreshCw } from 'lucide-react';
 import { getBaseUrl } from '../utils/comfyHelper';
 
 const DEFAULT_WORKFLOW = `{
@@ -65,27 +65,64 @@ const DEFAULT_WORKFLOW = `{
 }`;
 
 export const SettingsPanel: React.FC = () => {
-  const settings = useLiveQuery(() => db.settings.toArray());
+  const settings = useLiveQuery(() => db.settings.get(1));
+  
+  // Local state
   const [apiHost, setApiHost] = useState('127.0.0.1:8188');
   const [authToken, setAuthToken] = useState('');
   const [workflow, setWorkflow] = useState(DEFAULT_WORKFLOW);
-  const [saved, setSaved] = useState(false);
+  
+  // UI states
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
 
+  // Load settings on mount
   useEffect(() => {
-    if (settings && settings.length > 0) {
-      setApiHost(settings[0].apiHost);
-      setWorkflow(settings[0].workflowJson);
-      setAuthToken(settings[0].authToken || '');
+    if (settings) {
+      setApiHost(settings.apiHost);
+      setWorkflow(settings.workflowJson);
+      setAuthToken(settings.authToken || '');
     }
   }, [settings]);
+
+  const saveToDb = useCallback(async () => {
+    setSaveStatus('saving');
+    try {
+      // Validate JSON before saving
+      try {
+        JSON.parse(workflow);
+      } catch (e) {
+        setSaveStatus('idle'); // Don't save invalid JSON quietly
+        return; 
+      }
+
+      let cleanHost = apiHost.trim();
+      if (cleanHost.endsWith('/')) cleanHost = cleanHost.slice(0, -1);
+
+      await db.settings.put({
+        id: 1, // Always update ID 1
+        apiHost: cleanHost,
+        workflowJson: workflow,
+        authToken: authToken.trim()
+      });
+
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    } catch (e) {
+      console.error("Failed to save", e);
+      setSaveStatus('idle');
+    }
+  }, [apiHost, workflow, authToken]);
+
+  const handleBlur = () => {
+    saveToDb();
+  };
 
   const handleTestConnection = async () => {
     setTestStatus('testing');
     setTestMessage('');
     
-    // Use the helper to determine correct protocol (http vs https)
     const fetchUrl = getBaseUrl(apiHost);
 
     try {
@@ -107,49 +144,32 @@ export const SettingsPanel: React.FC = () => {
       if (res.ok) {
         setTestStatus('success');
         setTestMessage('Connected successfully!');
+        saveToDb(); // Auto-save on successful test
       } else {
         throw new Error(`Status: ${res.status} ${res.statusText}`);
       }
     } catch (e: any) {
       setTestStatus('error');
-      console.error(e);
       
       if (e.name === 'AbortError') {
         setTestMessage('Connection timed out. Check IP/Port.');
       } else if (e.message.includes('Failed to fetch')) {
-        setTestMessage('Network Error. Likely CORS or Mixed Content (HTTP vs HTTPS).');
+        setTestMessage('Network Error. Likely CORS or Mixed Content.');
       } else {
         setTestMessage(`Error: ${e.message}`);
       }
     }
   };
 
-  const handleSave = async () => {
-    try {
-      // Validate JSON
-      JSON.parse(workflow);
-      
-      // We store the raw input, but clean trailing slashes
-      let cleanHost = apiHost.trim();
-      if (cleanHost.endsWith('/')) cleanHost = cleanHost.slice(0, -1);
-      setApiHost(cleanHost);
-
-      await db.settings.clear();
-      await db.settings.add({
-        apiHost: cleanHost,
-        workflowJson: workflow,
-        authToken: authToken.trim()
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e) {
-      alert("Invalid JSON format in workflow.");
-    }
-  };
-
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto w-full h-full overflow-y-auto">
-      <h2 className="text-2xl font-bold text-white mb-6">Settings</h2>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-white">Settings</h2>
+        <div className="text-sm text-gray-400 flex items-center gap-2">
+            {saveStatus === 'saving' && <span className="animate-pulse">Saving...</span>}
+            {saveStatus === 'saved' && <span className="text-green-400">All changes saved</span>}
+        </div>
+      </div>
       
       <div className="bg-[#2b2d31] p-6 rounded-lg shadow-md mb-6 space-y-6">
         {/* Host Configuration */}
@@ -162,7 +182,8 @@ export const SettingsPanel: React.FC = () => {
               type="text"
               value={apiHost}
               onChange={(e) => setApiHost(e.target.value)}
-              className="flex-1 bg-[#1e1f22] text-white border border-[#1e1f22] rounded py-2 px-3 focus:outline-none focus:border-indigo-500 placeholder-gray-600"
+              onBlur={handleBlur}
+              className="flex-1 bg-[#1e1f22] text-white border border-[#1e1f22] rounded py-2 px-3 focus:outline-none focus:border-indigo-500 placeholder-gray-600 transition-colors"
               placeholder="e.g. 127.0.0.1:8188 or https://xxxx.vast.ai"
             />
           </div>
@@ -182,7 +203,8 @@ export const SettingsPanel: React.FC = () => {
               type="password"
               value={authToken}
               onChange={(e) => setAuthToken(e.target.value)}
-              className="flex-1 bg-[#1e1f22] text-white border border-[#1e1f22] rounded py-2 px-3 focus:outline-none focus:border-indigo-500 placeholder-gray-600"
+              onBlur={handleBlur}
+              className="flex-1 bg-[#1e1f22] text-white border border-[#1e1f22] rounded py-2 px-3 focus:outline-none focus:border-indigo-500 placeholder-gray-600 transition-colors"
               placeholder="(Optional) Paste your Open Button Token here"
             />
             <button
@@ -219,22 +241,24 @@ export const SettingsPanel: React.FC = () => {
             <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
             <p className="text-sm text-yellow-200">
               Export your workflow in <strong>API Format</strong> (Enable Dev Mode in ComfyUI settings). 
-              Replace your positive prompt text with <code>%PROMPT%</code>. 
+              Replace your positive prompt text with <code>%PROMPT%</code>.
             </p>
           </div>
           <textarea
             value={workflow}
             onChange={(e) => setWorkflow(e.target.value)}
-            className="w-full bg-[#1e1f22] text-gray-300 font-mono text-xs border border-[#1e1f22] rounded py-2 px-3 h-80 focus:outline-none focus:border-indigo-500"
+            onBlur={handleBlur}
+            spellCheck={false}
+            className="w-full bg-[#1e1f22] text-gray-300 font-mono text-xs border border-[#1e1f22] rounded py-2 px-3 h-80 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
 
         <button
-          onClick={handleSave}
+          onClick={saveToDb}
           className="flex items-center justify-center w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 rounded transition-colors"
         >
           <Save className="w-4 h-4 mr-2" />
-          {saved ? 'Saved Successfully!' : 'Save Settings'}
+          {saveStatus === 'saved' ? 'Saved!' : 'Save Settings Manually'}
         </button>
       </div>
     </div>
