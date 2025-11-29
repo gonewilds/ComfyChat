@@ -6,6 +6,88 @@ import { db } from '../db';
 import { parseWorkflow, prepareWorkflow, getImageUrl, getBaseUrl } from '../utils/comfyHelper';
 import { ChatMessage } from '../types';
 
+// --- Components ---
+
+// Advanced Lightbox with Zoom and Pan
+const Lightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  const handleWheel = (e: React.WheelEvent) => {
+    // Optional: Mouse wheel zoom
+    // e.stopPropagation();
+    // const newZoom = Math.min(Math.max(1, zoom - e.deltaY * 0.001), 5);
+    // setZoom(newZoom);
+    // if (newZoom === 1) setPan({ x: 0, y: 0 });
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (zoom === 1) {
+      setZoom(2.5); // Zoom level
+    } else {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (zoom > 1) {
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging && zoom > 1) {
+      e.preventDefault();
+      setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+    }
+  };
+
+  const handleMouseUp = () => setIsDragging(false);
+
+  return (
+    <div 
+      className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden animate-in fade-in duration-200"
+      onClick={onClose}
+      onWheel={handleWheel}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      onMouseMove={handleMouseMove}
+    >
+       <button 
+          onClick={onClose}
+          className="absolute top-4 right-4 p-2 text-white/70 hover:text-white transition-colors z-50 bg-black/50 rounded-full"
+       >
+         <X className="w-8 h-8" />
+       </button>
+       
+       <img 
+         src={src} 
+         alt="Full size"
+         draggable={false}
+         className="transition-transform duration-200 ease-out max-w-full max-h-full object-contain select-none"
+         style={{
+           transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+           cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'
+         }}
+         onClick={(e) => e.stopPropagation()}
+         onDoubleClick={handleDoubleClick}
+         onMouseDown={handleMouseDown}
+       />
+       
+       {zoom === 1 && (
+         <div className="absolute bottom-10 bg-black/50 text-white text-xs px-3 py-1 rounded-full pointer-events-none">
+           Double click to zoom
+         </div>
+       )}
+    </div>
+  );
+};
+
 // Memoized Image Component to handle Blob URLs efficiently
 const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge }: { 
   blob?: Blob, 
@@ -478,17 +560,20 @@ export const Chat: React.FC = () => {
           <textarea
             ref={textareaRef}
             className="flex-1 bg-transparent text-gray-100 placeholder-gray-400 focus:outline-none px-2 py-2 resize-none max-h-32 min-h-[44px]"
-            placeholder={isGenerating ? "Wait for generation to finish..." : "Type a prompt..."}
+            placeholder={isGenerating ? "Generating... (Type next prompt)" : "Type a prompt..."}
             value={input}
             rows={1}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !isGenerating) {
+              if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                handleSend(input);
+                // Prevent sending while generating to avoid state conflicts for now
+                if (!isGenerating) {
+                   handleSend(input);
+                }
               }
             }}
-            disabled={isGenerating}
+            // Removed disabled={isGenerating} to allow typing
           />
           <button
             onClick={() => handleSend(input)}
@@ -502,23 +587,7 @@ export const Chat: React.FC = () => {
 
       {/* Lightbox Modal */}
       {enlargedSrc && (
-        <div 
-          className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
-          onClick={() => setEnlargedSrc(null)}
-        >
-             <button 
-                onClick={() => setEnlargedSrc(null)}
-                className="absolute top-4 right-4 p-2 text-white/70 hover:text-white transition-colors z-50"
-             >
-               <X className="w-10 h-10" />
-             </button>
-             <img 
-               src={enlargedSrc} 
-               alt="Full size" 
-               className="max-w-full max-h-full object-contain rounded shadow-2xl cursor-default"
-               onClick={(e) => e.stopPropagation()} 
-             />
-        </div>
+        <Lightbox src={enlargedSrc} onClose={() => setEnlargedSrc(null)} />
       )}
     </div>
   );
