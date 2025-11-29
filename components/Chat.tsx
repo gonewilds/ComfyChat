@@ -77,6 +77,44 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: {
   );
 });
 
+// Component for Text Bubbles with Click-to-Copy
+const MessageBubble = ({ role, content }: { role: 'user' | 'bot', content: string }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    // Prevent interfering with text selection if user is trying to select
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) return;
+
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy', err);
+    }
+  };
+
+  return (
+    <div 
+      onClick={handleCopy}
+      title="Click to copy"
+      className={`p-3 rounded-lg text-gray-100 whitespace-pre-wrap cursor-pointer transition-colors relative active:scale-[0.99]
+        ${role === 'user' 
+          ? 'bg-[#2b2d31] rounded-tr-none hover:bg-[#35373c]' 
+          : 'bg-[#2b2d31] rounded-tl-none hover:bg-[#35373c]'
+        }`}
+    >
+      {content}
+      {copied && (
+        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs px-2 py-1 rounded shadow-lg pointer-events-none whitespace-nowrap z-10">
+          Copied!
+        </span>
+      )}
+    </div>
+  );
+};
+
 export const Chat: React.FC = () => {
   const messages = useLiveQuery(() => db.messages.orderBy('timestamp').toArray());
   const settings = useLiveQuery(() => db.settings.toArray());
@@ -391,9 +429,7 @@ export const Chat: React.FC = () => {
                 </div>
 
                 {msg.content && (
-                  <div className={`p-3 rounded-lg text-gray-100 whitespace-pre-wrap ${msg.role === 'user' ? 'bg-[#2b2d31] rounded-tr-none' : 'bg-[#2b2d31] rounded-tl-none'}`}>
-                    {msg.content}
-                  </div>
+                  <MessageBubble role={msg.role} content={msg.content} />
                 )}
 
                 {(msg.imageBlob || msg.imageUrl) && (
