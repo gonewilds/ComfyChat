@@ -21,8 +21,6 @@ export const parseWorkflow = (jsonString: string): ComfyWorkflow | null => {
 export const prepareWorkflow = (workflow: ComfyWorkflow, prompt: string): ComfyWorkflow => {
   const workflowString = JSON.stringify(workflow);
   // Simple string replacement for the prompt
-  // We handle potential JSON escaping issues by being careful or simple replacement
-  // Ideally, user puts "%PROMPT%" in their CLIP Text Encode node.
   const injectedString = workflowString.replace(PROMPT_PLACEHOLDER, prompt.replace(/"/g, '\\"').replace(/\n/g, '\\n'));
   
   const newWorkflow = JSON.parse(injectedString);
@@ -32,8 +30,6 @@ export const prepareWorkflow = (workflow: ComfyWorkflow, prompt: string): ComfyW
     if (node.inputs) {
       for (const key in node.inputs) {
         if (key === 'seed' || key === 'noise_seed') {
-          // ComfyUI uses long integers. Javascript max safe integer might be small, 
-          // but usually enough. 
           node.inputs[key] = Math.floor(Math.random() * 1000000000000000);
         }
       }
@@ -43,7 +39,21 @@ export const prepareWorkflow = (workflow: ComfyWorkflow, prompt: string): ComfyW
   return newWorkflow;
 };
 
+export const getBaseUrl = (host: string): string => {
+  let url = host.trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    // If we are on HTTPS, default to HTTPS for the API to avoid Mixed Content
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      url = `https://${url}`;
+    } else {
+      url = `http://${url}`;
+    }
+  }
+  return url.endsWith('/') ? url.slice(0, -1) : url;
+};
+
 export const getImageUrl = (host: string, filename: string, subfolder: string, type: string) => {
-  const protocol = host.startsWith('http') ? '' : 'http://';
-  return `${protocol}${host}/view?filename=${filename}&subfolder=${subfolder}&type=${type}`;
+  const baseUrl = getBaseUrl(host);
+  const query = new URLSearchParams({ filename, subfolder, type });
+  return `${baseUrl}/view?${query.toString()}`;
 };

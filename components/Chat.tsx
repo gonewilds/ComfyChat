@@ -1,10 +1,64 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, memo } from 'react';
 import { Send, RefreshCw, Star, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
-import { parseWorkflow, prepareWorkflow, getImageUrl } from '../utils/comfyHelper';
+import { parseWorkflow, prepareWorkflow, getImageUrl, getBaseUrl } from '../utils/comfyHelper';
 import { ChatMessage } from '../types';
+
+// Memoized Image Component to handle Blob URLs efficiently
+const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore }: { 
+  blob?: Blob, 
+  url?: string, 
+  alt: string,
+  onFavorite: () => void,
+  onGenerateMore: () => void
+}) => {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (blob) {
+      const newUrl = URL.createObjectURL(blob);
+      setObjectUrl(newUrl);
+      return () => URL.revokeObjectURL(newUrl);
+    }
+  }, [blob]);
+
+  const src = objectUrl || url;
+
+  if (!src) return null;
+
+  return (
+    <div className="mt-2 relative inline-block rounded-lg overflow-hidden bg-black/20 border border-gray-700 group">
+      <img 
+        src={src} 
+        alt={alt} 
+        className="max-w-full md:max-w-sm lg:max-w-md h-auto block"
+      />
+      
+      {/* Action Bar on Image */}
+      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button 
+          onClick={onFavorite}
+          className="bg-black/50 hover:bg-yellow-500/80 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
+          title="Add to Favorites"
+        >
+          <Star className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex justify-center">
+        <button
+          onClick={onGenerateMore}
+          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-full shadow-lg transition-transform hover:scale-105"
+        >
+          <RefreshCw className="w-3 h-3" />
+          Generate More
+        </button>
+      </div>
+    </div>
+  );
+});
 
 export const Chat: React.FC = () => {
   const messages = useLiveQuery(() => db.messages.orderBy('timestamp').toArray());
@@ -27,74 +81,91 @@ export const Chat: React.FC = () => {
   useEffect(() => {
     if (!settings || settings.length === 0) return;
 
-    const host = settings[0].apiHost;
-    const protocol = host.startsWith('http') ? host.replace('http', 'ws') : `ws://${host}`;
-    // Handle cases where host doesn't include protocol
-    const wsUrl = protocol.includes('ws') ? `${protocol}/ws?clientId=${clientId.current}` : `ws://${host}/ws?clientId=${clientId.current}`;
+    const { apiHost, authToken } = settings[0];
+    
+    // Determine WS protocol based on API host protocol
+    const baseUrl = getBaseUrl(apiHost);
+    const wsProtocol = baseUrl.startsWith('https') ? 'wss' : 'ws';
+    const hostWithoutProtocol = baseUrl.replace(/^https?:\/\//, '');
+    let wsUrl = `${wsProtocol}://${hostWithoutProtocol}/ws?clientId=${clientId.current}`;
+    
+    if (authToken) {
+      wsUrl += `&token=${encodeURIComponent(authToken)}`;
+    }
 
     const connect = () => {
-      const ws = new WebSocket(wsUrl);
-      ws.onopen = () => console.log("Connected to ComfyUI");
-      ws.onmessage = async (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'execution_start') {
-             // Maybe update status of pending message
-          }
-          
-          if (data.type === 'executing' && data.data.node === null) {
-            // Execution finished
-            setIsGenerating(false);
-          }
+      // Close existing if open
+      if (wsRef.current) wsRef.current.close();
 
-          if (data.type === 'executed') {
-             // Image generated
-             const images = data.data.output.images;
-             if (images && images.length > 0) {
-               const imgData = images[0];
-               const fullUrl = getImageUrl(host, imgData.filename, imgData.subfolder, imgData.type);
-               
-               // Fetch image to store as blob
-               try {
-                 const res = await fetch(fullUrl);
-                 const blob = await res.blob();
+      try {
+        const ws = new WebSocket(wsUrl);
+        ws.onopen = () => console.log("Connected to ComfyUI WS");
+        ws.onerror = (err) => console.log("WS Error", err); // Prevent crash
+        ws.onmessage = async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'execution_start') {
+               // Maybe update status of pending message
+            }
+            
+            if (data.type === 'executing' && data.data.node === null) {
+              // Execution finished
+              setIsGenerating(false);
+            }
+
+            if (data.type === 'executed') {
+               // Image generated
+               const images = data.data.output.images;
+               if (images && images.length > 0) {
+                 const imgData = images[0];
+                 const fullUrl = getImageUrl(apiHost, imgData.filename, imgData.subfolder, imgData.type);
                  
-                 // Find the placeholder message and update it
-                 // Since we don't have a direct prompt ID link from WS without advanced tracking,
-                 // we'll assume the last 'loading' message is the one.
-                 // Better approach: ComfyUI returns prompt_id. We should store prompt_id in DB.
-                 // For this simple version, we'll append a new bot message.
-                 
-                 await db.messages.add({
-                   role: 'bot',
-                   content: '',
-                   imageUrl: fullUrl,
-                   imageBlob: blob,
-                   timestamp: Date.now(),
-                   status: 'complete',
-                   // We need to attach the original prompt to this result for "Generate More"
-                   // We'll simplisticly look at the last user message
-                 });
-                 
-                 // Update the last user message or loading message?
-                 // Let's remove any "Generating..." placeholders if we implemented them.
-               } catch (err) {
-                 console.error("Failed to fetch image blob", err);
+                 // Fetch image to store as blob (Authorized Fetch)
+                 try {
+                   const headers: Record<string, string> = {};
+                   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+                   const res = await fetch(fullUrl, { headers });
+                   if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
+                   
+                   const blob = await res.blob();
+                   
+                   await db.messages.add({
+                     role: 'bot',
+                     content: '',
+                     imageUrl: fullUrl,
+                     imageBlob: blob,
+                     timestamp: Date.now(),
+                     status: 'complete',
+                   });
+                   
+                 } catch (err) {
+                   console.error("Failed to fetch image blob", err);
+                   // Even if blob fetch fails (e.g. CORS), we save the entry so user knows something happened
+                   await db.messages.add({
+                      role: 'bot',
+                      content: 'Image generated but failed to download. Check console for CORS errors.',
+                      imageUrl: fullUrl,
+                      timestamp: Date.now(),
+                      status: 'error'
+                   });
+                 }
                }
-             }
+            }
+          } catch (e) {
+            console.error("WS Parse error", e);
           }
-        } catch (e) {
-          console.error("WS Parse error", e);
-        }
-      };
-      
-      ws.onclose = () => {
-        console.log("WS Closed, retrying...");
-        setTimeout(connect, 3000);
-      };
+        };
+        
+        ws.onclose = () => {
+          // console.log("WS Closed"); 
+        };
 
-      wsRef.current = ws;
+        wsRef.current = ws;
+      } catch (e) {
+        console.error("Failed to create WebSocket", e);
+      }
     };
 
     connect();
@@ -111,7 +182,7 @@ export const Chat: React.FC = () => {
       return;
     }
 
-    const { apiHost, workflowJson } = settings[0];
+    const { apiHost, workflowJson, authToken } = settings[0];
     const workflow = parseWorkflow(workflowJson);
     
     if (!workflow) {
@@ -131,8 +202,8 @@ export const Chat: React.FC = () => {
     setIsGenerating(true);
 
     try {
-      const protocol = apiHost.startsWith('http') ? '' : 'http://';
-      const url = `${protocol}${apiHost}/prompt`;
+      const baseUrl = getBaseUrl(apiHost);
+      const url = `${baseUrl}/prompt`;
       
       const promptWorkflow = prepareWorkflow(workflow, promptText);
       
@@ -141,9 +212,16 @@ export const Chat: React.FC = () => {
         prompt: promptWorkflow
       };
 
+      const headers: Record<string, string> = { 
+        'Content-Type': 'application/json' 
+      };
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify(body)
       });
 
@@ -157,7 +235,7 @@ export const Chat: React.FC = () => {
       console.error(e);
       await db.messages.add({
         role: 'bot',
-        content: `Error: ${(e as Error).message}. Check CORS and URL.`,
+        content: `Error: ${(e as Error).message}. Check CORS, URL, and Token.`,
         timestamp: Date.now(),
         status: 'error'
       });
@@ -165,17 +243,31 @@ export const Chat: React.FC = () => {
     }
   };
 
-  const handleGenerateMore = async (originalPrompt: string) => {
-    await handleSend(originalPrompt);
+  const handleGenerateMore = async (msgId: number) => {
+    // Find the prompt related to this message
+    if (!messages) return;
+    const msgIndex = messages.findIndex(m => m.id === msgId);
+    if (msgIndex === -1) return;
+
+    // Look backwards for the user prompt
+    let prompt = "";
+    for (let i = msgIndex - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        prompt = messages[i].content;
+        break;
+      }
+    }
+
+    if (prompt) {
+      await handleSend(prompt);
+    } else {
+      alert("Could not find original prompt.");
+    }
   };
 
   const handleFavorite = async (msg: ChatMessage) => {
-    if (msg.imageBlob && msg.imageUrl) {
-      // Find the prompt that generated this. 
-      // Simplification: We iterate backwards from this message to find the first 'user' message
-      // Or we can modify the DB structure to link them. 
-      // For now, let's try to find the closest previous user message.
-      
+    if (msg.imageBlob) {
+      // Find prompt
       let prompt = "Unknown prompt";
       if (messages) {
         const msgIndex = messages.findIndex(m => m.id === msg.id);
@@ -236,50 +328,14 @@ export const Chat: React.FC = () => {
                   </div>
                 )}
 
-                {msg.imageUrl && (
-                  <div className="mt-2 relative inline-block rounded-lg overflow-hidden bg-black/20 border border-gray-700">
-                    <img 
-                      src={msg.imageUrl} 
-                      alt="Generated" 
-                      className="max-w-full md:max-w-sm lg:max-w-md h-auto block"
-                    />
-                    
-                    {/* Action Bar on Image */}
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button 
-                        onClick={() => handleFavorite(msg)}
-                        className="bg-black/50 hover:bg-yellow-500/80 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
-                        title="Add to Favorites"
-                      >
-                        <Star className="w-5 h-5" />
-                      </button>
-                    </div>
-
-                    <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex justify-center">
-                      <button
-                        onClick={() => {
-                           // Find prompt again logic, same as favorite...
-                           // Ideally we store prompt in msg object.
-                           // Let's do the lookup here for now.
-                           let prompt = "";
-                           if (messages) {
-                            const msgIndex = messages.findIndex(m => m.id === msg.id);
-                            for (let i = msgIndex - 1; i >= 0; i--) {
-                              if (messages[i].role === 'user') {
-                                prompt = messages[i].content;
-                                break;
-                              }
-                            }
-                           }
-                           if(prompt) handleGenerateMore(prompt);
-                        }}
-                        className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-full shadow-lg transition-transform hover:scale-105"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                        Generate More
-                      </button>
-                    </div>
-                  </div>
+                {(msg.imageBlob || msg.imageUrl) && (
+                   <ChatImage 
+                     blob={msg.imageBlob}
+                     url={msg.imageUrl}
+                     alt="Generated Image"
+                     onFavorite={() => handleFavorite(msg)}
+                     onGenerateMore={() => msg.id && handleGenerateMore(msg.id)}
+                   />
                 )}
               </div>
             </div>

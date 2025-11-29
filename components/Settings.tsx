@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Save, AlertCircle } from 'lucide-react';
+import { Save, AlertCircle, Wifi, CheckCircle, XCircle, Key } from 'lucide-react';
+import { getBaseUrl } from '../utils/comfyHelper';
 
 const DEFAULT_WORKFLOW = `{
   "3": {
@@ -66,25 +67,78 @@ const DEFAULT_WORKFLOW = `{
 export const SettingsPanel: React.FC = () => {
   const settings = useLiveQuery(() => db.settings.toArray());
   const [apiHost, setApiHost] = useState('127.0.0.1:8188');
+  const [authToken, setAuthToken] = useState('');
   const [workflow, setWorkflow] = useState(DEFAULT_WORKFLOW);
   const [saved, setSaved] = useState(false);
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [testMessage, setTestMessage] = useState('');
 
   useEffect(() => {
     if (settings && settings.length > 0) {
       setApiHost(settings[0].apiHost);
       setWorkflow(settings[0].workflowJson);
+      setAuthToken(settings[0].authToken || '');
     }
   }, [settings]);
+
+  const handleTestConnection = async () => {
+    setTestStatus('testing');
+    setTestMessage('');
+    
+    // Use the helper to determine correct protocol (http vs https)
+    const fetchUrl = getBaseUrl(apiHost);
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const headers: Record<string, string> = {};
+      if (authToken.trim()) {
+        headers['Authorization'] = `Bearer ${authToken.trim()}`;
+      }
+
+      const res = await fetch(`${fetchUrl}/system_stats`, { 
+        signal: controller.signal,
+        headers
+      });
+      
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        setTestStatus('success');
+        setTestMessage('Connected successfully!');
+      } else {
+        throw new Error(`Status: ${res.status} ${res.statusText}`);
+      }
+    } catch (e: any) {
+      setTestStatus('error');
+      console.error(e);
+      
+      if (e.name === 'AbortError') {
+        setTestMessage('Connection timed out. Check IP/Port.');
+      } else if (e.message.includes('Failed to fetch')) {
+        setTestMessage('Network Error. Likely CORS or Mixed Content (HTTP vs HTTPS).');
+      } else {
+        setTestMessage(`Error: ${e.message}`);
+      }
+    }
+  };
 
   const handleSave = async () => {
     try {
       // Validate JSON
       JSON.parse(workflow);
       
+      // We store the raw input, but clean trailing slashes
+      let cleanHost = apiHost.trim();
+      if (cleanHost.endsWith('/')) cleanHost = cleanHost.slice(0, -1);
+      setApiHost(cleanHost);
+
       await db.settings.clear();
       await db.settings.add({
-        apiHost,
-        workflowJson: workflow
+        apiHost: cleanHost,
+        workflowJson: workflow,
+        authToken: authToken.trim()
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -97,24 +151,67 @@ export const SettingsPanel: React.FC = () => {
     <div className="p-4 md:p-8 max-w-4xl mx-auto w-full h-full overflow-y-auto">
       <h2 className="text-2xl font-bold text-white mb-6">Settings</h2>
       
-      <div className="bg-[#2b2d31] p-6 rounded-lg shadow-md mb-6">
-        <div className="mb-4">
+      <div className="bg-[#2b2d31] p-6 rounded-lg shadow-md mb-6 space-y-6">
+        {/* Host Configuration */}
+        <div>
           <label className="block text-gray-300 text-sm font-bold mb-2">
-            ComfyUI API Host
+            ComfyUI API Host URL
           </label>
-          <input
-            type="text"
-            value={apiHost}
-            onChange={(e) => setApiHost(e.target.value)}
-            className="w-full bg-[#1e1f22] text-white border border-[#1e1f22] rounded py-2 px-3 focus:outline-none focus:border-indigo-500"
-            placeholder="e.g. 127.0.0.1:8188"
-          />
-          <p className="text-xs text-gray-400 mt-1">
-            Ensure your ComfyUI is launched with <code>--listen</code> and CORS enabled if accessed remotely.
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={apiHost}
+              onChange={(e) => setApiHost(e.target.value)}
+              className="flex-1 bg-[#1e1f22] text-white border border-[#1e1f22] rounded py-2 px-3 focus:outline-none focus:border-indigo-500 placeholder-gray-600"
+              placeholder="e.g. 127.0.0.1:8188 or https://xxxx.vast.ai"
+            />
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            If using Vast.ai/Ngrok, make sure to include <code>https://</code>
           </p>
         </div>
 
-        <div className="mb-4">
+        {/* Auth Token Configuration */}
+        <div>
+          <label className="block text-gray-300 text-sm font-bold mb-2 flex items-center gap-2">
+            <Key className="w-4 h-4" />
+            Vast.ai API Token (Bearer Token)
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={authToken}
+              onChange={(e) => setAuthToken(e.target.value)}
+              className="flex-1 bg-[#1e1f22] text-white border border-[#1e1f22] rounded py-2 px-3 focus:outline-none focus:border-indigo-500 placeholder-gray-600"
+              placeholder="(Optional) Paste your Open Button Token here"
+            />
+            <button
+              onClick={handleTestConnection}
+              disabled={testStatus === 'testing'}
+              className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded font-medium flex items-center gap-2 transition-colors disabled:opacity-50"
+            >
+              {testStatus === 'testing' ? (
+                <Wifi className="w-4 h-4 animate-pulse" />
+              ) : (
+                <Wifi className="w-4 h-4" />
+              )}
+              Test
+            </button>
+          </div>
+
+          {/* Connection Status Message */}
+          {testStatus !== 'idle' && (
+            <div className={`mt-2 text-sm flex items-center gap-2 ${
+              testStatus === 'success' ? 'text-green-400' : 'text-red-400'
+            }`}>
+              {testStatus === 'success' ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+              <span>{testMessage}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Workflow Configuration */}
+        <div>
           <label className="block text-gray-300 text-sm font-bold mb-2">
             Workflow API JSON
           </label>
@@ -123,22 +220,21 @@ export const SettingsPanel: React.FC = () => {
             <p className="text-sm text-yellow-200">
               Export your workflow in <strong>API Format</strong> (Enable Dev Mode in ComfyUI settings). 
               Replace your positive prompt text with <code>%PROMPT%</code>. 
-              The app will automatically randomize <code>seed</code> inputs.
             </p>
           </div>
           <textarea
             value={workflow}
             onChange={(e) => setWorkflow(e.target.value)}
-            className="w-full bg-[#1e1f22] text-gray-300 font-mono text-xs border border-[#1e1f22] rounded py-2 px-3 h-96 focus:outline-none focus:border-indigo-500"
+            className="w-full bg-[#1e1f22] text-gray-300 font-mono text-xs border border-[#1e1f22] rounded py-2 px-3 h-80 focus:outline-none focus:border-indigo-500"
           />
         </div>
 
         <button
           onClick={handleSave}
-          className="flex items-center justify-center w-full md:w-auto bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-6 rounded transition-colors"
+          className="flex items-center justify-center w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 rounded transition-colors"
         >
           <Save className="w-4 h-4 mr-2" />
-          {saved ? 'Saved!' : 'Save Settings'}
+          {saved ? 'Saved Successfully!' : 'Save Settings'}
         </button>
       </div>
     </div>
