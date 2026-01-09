@@ -1,10 +1,11 @@
+
 import React, { useEffect, useRef, useState, memo } from 'react';
-import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download, X } from 'lucide-react';
+import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download, X, Dices, PlusCircle } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
 import { parseWorkflow, prepareWorkflow, getImageUrl, getBaseUrl } from '../utils/comfyHelper';
-import { ChatMessage } from '../types';
+import { ChatMessage, Settings as SettingsType } from '../types';
 
 // --- Components ---
 
@@ -15,18 +16,10 @@ const Lightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
-  const handleWheel = (e: React.WheelEvent) => {
-    // Optional: Mouse wheel zoom
-    // e.stopPropagation();
-    // const newZoom = Math.min(Math.max(1, zoom - e.deltaY * 0.001), 5);
-    // setZoom(newZoom);
-    // if (newZoom === 1) setPan({ x: 0, y: 0 });
-  };
-
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (zoom === 1) {
-      setZoom(2.5); // Zoom level
+      setZoom(2.5);
     } else {
       setZoom(1);
       setPan({ x: 0, y: 0 });
@@ -53,7 +46,6 @@ const Lightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
     <div 
       className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden animate-in fade-in duration-200"
       onClick={onClose}
-      onWheel={handleWheel}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onMouseMove={handleMouseMove}
@@ -88,7 +80,6 @@ const Lightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
   );
 };
 
-// Memoized Image Component to handle Blob URLs efficiently
 const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge }: { 
   blob?: Blob, 
   url?: string, 
@@ -141,7 +132,6 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
         onClick={() => onEnlarge(src)}
       />
       
-      {/* Action Bar on Image */}
       <div className="absolute top-2 right-2 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
         <button 
           onClick={handleDownload}
@@ -172,15 +162,12 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
   );
 });
 
-// Component for Text Bubbles with Click-to-Copy
 const MessageBubble = ({ role, content }: { role: 'user' | 'bot', content: string }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async (e: React.MouseEvent) => {
-    // Prevent interfering with text selection if user is trying to select
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) return;
-
     try {
       await navigator.clipboard.writeText(content);
       setCopied(true);
@@ -212,7 +199,8 @@ const MessageBubble = ({ role, content }: { role: 'user' | 'bot', content: strin
 
 export const Chat: React.FC = () => {
   const messages = useLiveQuery(() => db.messages.orderBy('timestamp').toArray());
-  const settings = useLiveQuery(() => db.settings.toArray());
+  const settingsArray = useLiveQuery(() => db.settings.toArray());
+  const settings = settingsArray?.[0];
   
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -223,67 +211,43 @@ export const Chat: React.FC = () => {
   const clientId = useRef(uuidv4());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-scroll to bottom
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, isGenerating]);
 
-  // Establish WebSocket connection
   useEffect(() => {
-    if (!settings || settings.length === 0) return;
+    if (!settings) return;
 
-    const { apiHost, authToken } = settings[0];
-    
-    // Determine WS protocol based on API host protocol
+    const { apiHost, authToken } = settings;
     const baseUrl = getBaseUrl(apiHost);
     const wsProtocol = baseUrl.startsWith('https') ? 'wss' : 'ws';
     const hostWithoutProtocol = baseUrl.replace(/^https?:\/\//, '');
     let wsUrl = `${wsProtocol}://${hostWithoutProtocol}/ws?clientId=${clientId.current}`;
-    
-    if (authToken) {
-      wsUrl += `&token=${encodeURIComponent(authToken)}`;
-    }
+    if (authToken) wsUrl += `&token=${encodeURIComponent(authToken)}`;
 
     const connect = () => {
-      // Close existing if open
       if (wsRef.current) wsRef.current.close();
-
       try {
         const ws = new WebSocket(wsUrl);
-        ws.onopen = () => console.log("Connected to ComfyUI WS");
-        ws.onerror = (err) => console.log("WS Error", err); // Prevent crash
         ws.onmessage = async (event) => {
           try {
             const data = JSON.parse(event.data);
-            
-            if (data.type === 'execution_start') {
-               // Maybe update status of pending message
-            }
-            
             if (data.type === 'executing' && data.data.node === null) {
-              // Execution finished
               setIsGenerating(false);
             }
-
             if (data.type === 'executed') {
-               // Image generated
                const images = data.data.output.images;
                if (images && images.length > 0) {
                  const imgData = images[0];
                  const fullUrl = getImageUrl(apiHost, imgData.filename, imgData.subfolder, imgData.type);
-                 
-                 // Fetch image to store as blob (Authorized Fetch)
                  try {
                    const headers: Record<string, string> = {};
                    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-
                    const res = await fetch(fullUrl, { headers });
-                   if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
-                   
+                   if (!res.ok) throw new Error(`Image fetch failed`);
                    const blob = await res.blob();
-                   
                    await db.messages.add({
                      role: 'bot',
                      content: '',
@@ -292,13 +256,10 @@ export const Chat: React.FC = () => {
                      timestamp: Date.now(),
                      status: 'complete',
                    });
-                   
                  } catch (err) {
-                   console.error("Failed to fetch image blob", err);
-                   // Even if blob fetch fails (e.g. CORS), we save the entry so user knows something happened
                    await db.messages.add({
                       role: 'bot',
-                      content: 'Image generated but failed to download. Check console for CORS errors.',
+                      content: 'Image generated but failed to download. Check console.',
                       imageUrl: fullUrl,
                       timestamp: Date.now(),
                       status: 'error'
@@ -306,29 +267,17 @@ export const Chat: React.FC = () => {
                  }
                }
             }
-          } catch (e) {
-            console.error("WS Parse error", e);
-          }
+          } catch (e) {}
         };
-        
-        ws.onclose = () => {
-          // console.log("WS Closed"); 
-        };
-
         wsRef.current = ws;
-      } catch (e) {
-        console.error("Failed to create WebSocket", e);
-      }
+      } catch (e) {}
     };
-
     connect();
-
     return () => {
       if (wsRef.current) wsRef.current.close();
     };
   }, [settings]);
 
-  // Adjust textarea height
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -338,20 +287,12 @@ export const Chat: React.FC = () => {
 
   const handleSend = async (promptText: string) => {
     if (!promptText.trim()) return;
-    if (!settings || settings.length === 0) {
-      alert("Please configure settings first.");
-      return;
-    }
+    if (!settings) return;
 
-    const { apiHost, workflowJson, authToken } = settings[0];
+    const { apiHost, workflowJson, authToken, seedMode, lastSeed } = settings;
     const workflow = parseWorkflow(workflowJson);
-    
-    if (!workflow) {
-      alert("Invalid Workflow JSON in settings.");
-      return;
-    }
+    if (!workflow) return;
 
-    // Add user message
     await db.messages.add({
       role: 'user',
       content: promptText,
@@ -360,44 +301,36 @@ export const Chat: React.FC = () => {
     });
     
     setInput('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto'; // Reset height
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setIsGenerating(true);
 
     try {
+      const { workflow: promptWorkflow, appliedSeed } = prepareWorkflow(
+        workflow, 
+        promptText, 
+        seedMode || 'random', 
+        lastSeed || 0
+      );
+      
+      // Update the last seed in the database
+      await db.settings.update(1, { lastSeed: appliedSeed });
+
       const baseUrl = getBaseUrl(apiHost);
       const url = `${baseUrl}/prompt`;
-      
-      const promptWorkflow = prepareWorkflow(workflow, promptText);
-      
-      const body = {
-        client_id: clientId.current,
-        prompt: promptWorkflow
-      };
-
-      const headers: Record<string, string> = { 
-        'Content-Type': 'application/json' 
-      };
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
+      const body = { client_id: clientId.current, prompt: promptWorkflow };
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
       const res = await fetch(url, {
         method: 'POST',
         headers: headers,
         body: JSON.stringify(body)
       });
-
-      if (!res.ok) {
-        throw new Error(`API Error: ${res.statusText}`);
-      }
-      
-      // We rely on WebSocket to deliver the result
-      
+      if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
     } catch (e) {
-      console.error(e);
       await db.messages.add({
         role: 'bot',
-        content: `Error: ${(e as Error).message}. Check CORS, URL, and Token.`,
+        content: `Error: ${(e as Error).message}`,
         timestamp: Date.now(),
         status: 'error'
       });
@@ -406,12 +339,9 @@ export const Chat: React.FC = () => {
   };
 
   const handleGenerateMore = async (msgId: number) => {
-    // Find the prompt related to this message
     if (!messages) return;
     const msgIndex = messages.findIndex(m => m.id === msgId);
     if (msgIndex === -1) return;
-
-    // Look backwards for the user prompt
     let prompt = "";
     for (let i = msgIndex - 1; i >= 0; i--) {
       if (messages[i].role === 'user') {
@@ -419,17 +349,11 @@ export const Chat: React.FC = () => {
         break;
       }
     }
-
-    if (prompt) {
-      await handleSend(prompt);
-    } else {
-      alert("Could not find original prompt.");
-    }
+    if (prompt) await handleSend(prompt);
   };
 
   const handleFavorite = async (msg: ChatMessage) => {
     if (msg.imageBlob) {
-      // Find prompt
       let prompt = "Unknown prompt";
       if (messages) {
         const msgIndex = messages.findIndex(m => m.id === msg.id);
@@ -440,37 +364,25 @@ export const Chat: React.FC = () => {
           }
         }
       }
-
-      await db.favorites.add({
-        prompt: prompt,
-        imageBlob: msg.imageBlob,
-        timestamp: Date.now()
-      });
+      await db.favorites.add({ prompt, imageBlob: msg.imageBlob, timestamp: Date.now() });
       alert("Added to gallery!");
     }
   };
 
-  const handleClearChat = async () => {
-    if (confirm("Are you sure you want to delete all messages? This cannot be undone.")) {
-      await db.messages.clear();
-    }
+  const toggleSeedMode = async () => {
+    if (!settings) return;
+    const nextMode = settings.seedMode === 'random' ? 'increment' : 'random';
+    await db.settings.update(1, { seedMode: nextMode });
   };
 
-  // Check if settings exist
-  if (settings === undefined) return null; // Loading
-  if (settings.length === 0) {
+  if (settingsArray === undefined) return null;
+  if (!settings) {
     return (
       <div className="flex flex-col h-full bg-[#313338] items-center justify-center p-6 text-center">
         <div className="bg-[#2b2d31] p-8 rounded-lg shadow-lg max-w-md">
            <Settings className="w-16 h-16 text-indigo-400 mx-auto mb-4" />
            <h2 className="text-xl font-bold text-white mb-2">Setup Required</h2>
-           <p className="text-gray-400 mb-6">
-             Please configure your ComfyUI API endpoint and workflow in the settings menu to start generating images.
-           </p>
-           {/* Note: In a real app we might use a context to switch views, but here we rely on the user clicking the sidebar */}
-           <div className="text-sm text-indigo-300">
-             Open the <strong>Settings</strong> tab to continue.
-           </div>
+           <p className="text-gray-400 mb-6">Configure ComfyUI in Settings to start.</p>
         </div>
       </div>
     );
@@ -478,14 +390,13 @@ export const Chat: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full bg-[#313338]">
-      {/* Header Bar */}
       <div className="h-12 border-b border-[#26272d] flex items-center justify-between px-4 bg-[#313338] shadow-sm flex-shrink-0">
          <div className="flex items-center gap-2 text-gray-200 font-bold">
             <Hash className="w-5 h-5 text-gray-400" />
             <span>general</span>
          </div>
          <button 
-           onClick={handleClearChat}
+           onClick={() => db.messages.clear()}
            className="text-gray-400 hover:text-red-400 transition-colors"
            title="Clear Chat History"
          >
@@ -493,11 +404,7 @@ export const Chat: React.FC = () => {
          </button>
       </div>
 
-      {/* Messages Area */}
-      <div 
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto p-4 space-y-6 min-h-0"
-      >
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6 min-h-0">
         {!messages || messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-400 opacity-50">
             <ImageIcon className="w-16 h-16 mb-4" />
@@ -505,35 +412,19 @@ export const Chat: React.FC = () => {
           </div>
         ) : (
           messages.map((msg, idx) => (
-            <div 
-              key={msg.id || idx} 
-              className={`flex gap-4 group ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
-            >
-              {/* Avatar */}
+            <div key={msg.id || idx} className={`flex gap-4 group ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
               <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-indigo-500' : 'bg-green-600'}`}>
                 {msg.role === 'user' ? 'U' : 'AI'}
               </div>
-
-              {/* Bubble */}
               <div className={`flex flex-col max-w-[85%] md:max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                 <div className="flex items-baseline gap-2 mb-1">
-                  <span className="font-semibold text-white">
-                    {msg.role === 'user' ? 'You' : 'ComfyBot'}
-                  </span>
-                  <span className="text-xs text-gray-400">
-                    {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                  </span>
+                  <span className="font-semibold text-white">{msg.role === 'user' ? 'You' : 'ComfyBot'}</span>
+                  <span className="text-xs text-gray-400">{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                 </div>
-
-                {msg.content && (
-                  <MessageBubble role={msg.role} content={msg.content} />
-                )}
-
+                {msg.content && <MessageBubble role={msg.role} content={msg.content} />}
                 {(msg.imageBlob || msg.imageUrl) && (
                    <ChatImage 
-                     blob={msg.imageBlob}
-                     url={msg.imageUrl}
-                     alt="Generated Image"
+                     blob={msg.imageBlob} url={msg.imageUrl} alt="Generated"
                      onFavorite={() => handleFavorite(msg)}
                      onGenerateMore={() => msg.id && handleGenerateMore(msg.id)}
                      onEnlarge={setEnlargedSrc}
@@ -554,9 +445,17 @@ export const Chat: React.FC = () => {
         )}
       </div>
 
-      {/* Input Area */}
       <div className="p-3 md:p-4 bg-[#383a40] flex-shrink-0 border-t border-[#26272d]">
         <div className="bg-[#404249] rounded-lg p-2 flex items-end gap-2">
+          {/* Quick toggle for seed mode */}
+          <button 
+            onClick={toggleSeedMode}
+            className="p-2 text-gray-400 hover:text-white transition-colors"
+            title={`Current Seed Mode: ${settings.seedMode || 'random'}. Click to toggle.`}
+          >
+            {settings.seedMode === 'increment' ? <PlusCircle className="w-6 h-6 text-indigo-400" /> : <Dices className="w-6 h-6" />}
+          </button>
+          
           <textarea
             ref={textareaRef}
             className="flex-1 bg-transparent text-gray-100 placeholder-gray-400 focus:outline-none px-2 py-2 resize-none max-h-32 min-h-[44px]"
@@ -565,15 +464,11 @@ export const Chat: React.FC = () => {
             rows={1}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Enter' && !e.shiftKey && !isGenerating) {
                 e.preventDefault();
-                // Prevent sending while generating to avoid state conflicts for now
-                if (!isGenerating) {
-                   handleSend(input);
-                }
+                handleSend(input);
               }
             }}
-            // Removed disabled={isGenerating} to allow typing
           />
           <button
             onClick={() => handleSend(input)}
@@ -585,10 +480,7 @@ export const Chat: React.FC = () => {
         </div>
       </div>
 
-      {/* Lightbox Modal */}
-      {enlargedSrc && (
-        <Lightbox src={enlargedSrc} onClose={() => setEnlargedSrc(null)} />
-      )}
+      {enlargedSrc && <Lightbox src={enlargedSrc} onClose={() => setEnlargedSrc(null)} />}
     </div>
   );
 };
