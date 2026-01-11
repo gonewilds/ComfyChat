@@ -124,37 +124,42 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
   if (!src) return null;
 
   return (
-    <div className="mt-2 relative inline-block rounded-lg overflow-hidden bg-black/20 border border-gray-700 group">
-      <img 
-        src={src} 
-        alt={alt} 
-        className="max-w-full md:max-w-sm lg:max-w-md h-auto block cursor-zoom-in"
-        onClick={() => onEnlarge(src)}
-      />
-      
-      <div className="absolute top-2 right-2 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-        <button 
-          onClick={handleDownload}
-          className="bg-black/50 hover:bg-gray-700 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
-          title="Download"
-        >
-          <Download className="w-5 h-5" />
-        </button>
-        <button 
-          onClick={handleFavoriteClick}
-          className="bg-black/50 hover:bg-yellow-500/80 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
-          title="Add to Favorites"
-        >
-          <Star className="w-5 h-5" />
-        </button>
+    <div className="mt-2 flex flex-col items-start gap-2">
+      {/* Image Container */}
+      <div className="relative inline-block rounded-lg overflow-hidden bg-black/20 border border-gray-700 group">
+        <img 
+          src={src} 
+          alt={alt} 
+          className="max-w-full md:max-w-sm lg:max-w-md h-auto block cursor-zoom-in"
+          onClick={() => onEnlarge(src)}
+        />
+        
+        {/* Quick Actions (Download/Favorite) - Kept as overlays for a cleaner look */}
+        <div className="absolute top-2 right-2 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+          <button 
+            onClick={handleDownload}
+            className="bg-black/50 hover:bg-gray-700 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
+            title="Download"
+          >
+            <Download className="w-5 h-5" />
+          </button>
+          <button 
+            onClick={handleFavoriteClick}
+            className="bg-black/50 hover:bg-yellow-500/80 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
+            title="Add to Favorites"
+          >
+            <Star className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
-      <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex justify-center">
+      {/* External Action Bar */}
+      <div className="flex gap-2">
         <button
           onClick={handleGenerateClick}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-full shadow-lg transition-transform hover:scale-105"
+          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded shadow transition-all active:scale-95 font-medium"
         >
-          <RefreshCw className="w-3 h-3" />
+          <RefreshCw className="w-3.5 h-3.5" />
           Generate More
         </button>
       </div>
