@@ -1,7 +1,6 @@
 
 import React, { useEffect, useRef, useState, memo, useMemo, useCallback } from 'react';
-/* Added Layout to the lucide-react imports */
-import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download, X, Dices, PlusCircle, ChevronLeft, ChevronRight, Layout } from 'lucide-react';
+import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download, X, Dices, PlusCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
@@ -216,6 +215,7 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
 
   return (
     <div className="mt-2 flex flex-col items-start gap-2">
+      {/* Image Container */}
       <div className="relative inline-block rounded-lg overflow-hidden bg-black/20 border border-gray-700 group">
         <img 
           src={src} 
@@ -224,6 +224,7 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
           onClick={() => onEnlarge(src)}
         />
         
+        {/* Quick Actions (Download/Favorite) - Kept as overlays for a cleaner look */}
         <div className="absolute top-2 right-2 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           <button 
             onClick={handleDownload}
@@ -242,6 +243,7 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
         </div>
       </div>
 
+      {/* External Action Bar */}
       <div className="flex gap-2">
         <button
           onClick={handleGenerateClick}
@@ -304,12 +306,6 @@ export const Chat: React.FC = () => {
   const clientId = useRef(uuidv4());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load the active profile
-  // Fix: Return undefined instead of null to satisfy Dexie useLiveQuery types
-  const activeProfile = useLiveQuery(() => 
-    settings?.activeProfileId ? db.workflowProfiles.get(settings.activeProfileId) : undefined
-  , [settings]);
-
   // Derive list of all images for the lightbox
   const imageMessages = useMemo(() => {
     return (messages || []).filter(m => m.imageBlob || m.imageUrl);
@@ -325,6 +321,7 @@ export const Chat: React.FC = () => {
     });
   }, [imageMessages]);
 
+  // Clean up object URLs on unmount or when imageSrcs changes
   useEffect(() => {
     return () => {
       imageSrcs.forEach(src => {
@@ -383,7 +380,7 @@ export const Chat: React.FC = () => {
                  } catch (err) {
                    await db.messages.add({
                       role: 'bot',
-                      content: 'Image generated but failed to download.',
+                      content: 'Image generated but failed to download. Check console.',
                       imageUrl: fullUrl,
                       timestamp: Date.now(),
                       status: 'error'
@@ -411,10 +408,10 @@ export const Chat: React.FC = () => {
 
   const handleSend = async (promptText: string) => {
     if (!promptText.trim()) return;
-    if (!settings || !activeProfile) return;
+    if (!settings) return;
 
-    const { apiHost, authToken, seedMode, lastSeed } = settings;
-    const workflow = parseWorkflow(activeProfile.workflowJson);
+    const { apiHost, workflowJson, authToken, seedMode, lastSeed } = settings;
+    const workflow = parseWorkflow(workflowJson);
     if (!workflow) return;
 
     await db.messages.add({
@@ -436,6 +433,7 @@ export const Chat: React.FC = () => {
         lastSeed || 0
       );
       
+      // Update the last seed in the database
       await db.settings.update(1, { lastSeed: appliedSeed });
 
       const baseUrl = getBaseUrl(apiHost);
@@ -503,7 +501,7 @@ export const Chat: React.FC = () => {
     return (
       <div className="flex flex-col h-full bg-[#313338] items-center justify-center p-6 text-center">
         <div className="bg-[#2b2d31] p-8 rounded-lg shadow-lg max-w-md">
-           <Layout className="w-16 h-16 text-indigo-400 mx-auto mb-4" />
+           <Settings className="w-16 h-16 text-indigo-400 mx-auto mb-4" />
            <h2 className="text-xl font-bold text-white mb-2">Setup Required</h2>
            <p className="text-gray-400 mb-6">Configure ComfyUI in Settings to start.</p>
         </div>
@@ -514,9 +512,9 @@ export const Chat: React.FC = () => {
   return (
     <div className="flex flex-col h-full bg-[#313338]">
       <div className="h-12 border-b border-[#26272d] flex items-center justify-between px-4 bg-[#313338] shadow-sm flex-shrink-0">
-         <div className="flex items-center gap-2 text-gray-200 font-bold overflow-hidden">
-            <Hash className="w-5 h-5 text-gray-400 flex-shrink-0" />
-            <span className="truncate" title={activeProfile?.name}>{activeProfile?.name || 'general'}</span>
+         <div className="flex items-center gap-2 text-gray-200 font-bold">
+            <Hash className="w-5 h-5 text-gray-400" />
+            <span>general</span>
          </div>
          <button 
            onClick={() => db.messages.clear()}
@@ -573,6 +571,7 @@ export const Chat: React.FC = () => {
 
       <div className="p-3 md:p-4 bg-[#383a40] flex-shrink-0 border-t border-[#26272d]">
         <div className="bg-[#404249] rounded-lg p-2 flex items-end gap-2">
+          {/* Quick toggle for seed mode */}
           <button 
             onClick={toggleSeedMode}
             className="p-2 text-gray-400 hover:text-white transition-colors"
