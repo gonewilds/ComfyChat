@@ -37,7 +37,7 @@ const Lightbox = ({ images, initialIndex, onClose }: { images: string[], initial
   const handlePrev = useCallback((e?: React.MouseEvent | KeyboardEvent) => {
     e?.stopPropagation();
     if (currentIndex > 0) {
-      setCurrentIndex(prev => prev + 1);
+      setCurrentIndex(prev => prev - 1);
       setZoom(1);
       setPan({ x: 0, y: 0 });
     }
@@ -305,8 +305,9 @@ export const Chat: React.FC = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Load the active profile
+  // Fix: Return undefined instead of null to satisfy Dexie useLiveQuery types
   const activeProfile = useLiveQuery(() => 
-    settings?.activeProfileId ? db.workflowProfiles.get(settings.activeProfileId) : null
+    settings?.activeProfileId ? db.workflowProfiles.get(settings.activeProfileId) : undefined
   , [settings]);
 
   // Derive list of all images for the lightbox
