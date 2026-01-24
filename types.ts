@@ -1,11 +1,17 @@
 
+export interface WorkflowProfile {
+  id?: number;
+  name: string;
+  workflowJson: string;
+}
+
 export interface Settings {
   id?: number;
   apiHost: string; // e.g., "127.0.0.1:8188"
-  workflowJson: string; // The raw JSON string
   authToken?: string; // Vast.ai Bearer token
   seedMode: 'random' | 'increment';
   lastSeed: number;
+  activeProfileId?: number; // Pointer to current active workflow profile
 }
 
 export interface ChatMessage {

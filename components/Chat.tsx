@@ -1,6 +1,7 @@
 
-import React, { useEffect, useRef, useState, memo } from 'react';
-import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download, X, Dices, PlusCircle } from 'lucide-react';
+import React, { useEffect, useRef, useState, memo, useMemo, useCallback } from 'react';
+/* Added Layout to the lucide-react imports */
+import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download, X, Dices, PlusCircle, ChevronLeft, ChevronRight, Layout } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
@@ -9,12 +10,48 @@ import { ChatMessage, Settings as SettingsType } from '../types';
 
 // --- Components ---
 
-// Advanced Lightbox with Zoom and Pan
-const Lightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
+// Advanced Lightbox with Zoom, Pan, and Navigation (Swipe/Arrows)
+const Lightbox = ({ images, initialIndex, onClose }: { images: string[], initialIndex: number, onClose: () => void }) => {
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  
+  // Touch swipe states
+  const touchStartX = useRef<number | null>(null);
+  const touchEndX = useRef<number | null>(null);
+  const swipeThreshold = 50;
+
+  const currentSrc = images[currentIndex];
+
+  const handleNext = useCallback((e?: React.MouseEvent | KeyboardEvent) => {
+    e?.stopPropagation();
+    if (currentIndex < images.length - 1) {
+      setCurrentIndex(prev => prev + 1);
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    }
+  }, [currentIndex, images.length]);
+
+  const handlePrev = useCallback((e?: React.MouseEvent | KeyboardEvent) => {
+    e?.stopPropagation();
+    if (currentIndex > 0) {
+      setCurrentIndex(prev => prev + 1);
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    }
+  }, [currentIndex]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') handleNext(e);
+      if (e.key === 'ArrowLeft') handlePrev(e);
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleNext, handlePrev, onClose]);
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -42,6 +79,30 @@ const Lightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
 
   const handleMouseUp = () => setIsDragging(false);
 
+  // Swipe logic
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (zoom > 1) return; // Disable swipe when zoomed
+    touchStartX.current = e.targetTouches[0].clientX;
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (zoom > 1) return;
+    touchEndX.current = e.targetTouches[0].clientX;
+  };
+
+  const onTouchEnd = () => {
+    if (zoom > 1 || !touchStartX.current || !touchEndX.current) return;
+    const distance = touchStartX.current - touchEndX.current;
+    const isLeftSwipe = distance > swipeThreshold;
+    const isRightSwipe = distance < -swipeThreshold;
+
+    if (isLeftSwipe) handleNext();
+    else if (isRightSwipe) handlePrev();
+
+    touchStartX.current = null;
+    touchEndX.current = null;
+  };
+
   return (
     <div 
       className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex items-center justify-center overflow-hidden animate-in fade-in duration-200"
@@ -49,16 +110,44 @@ const Lightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onMouseMove={handleMouseMove}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
     >
-       <button 
-          onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-white/70 hover:text-white transition-colors z-50 bg-black/50 rounded-full"
-       >
-         <X className="w-8 h-8" />
-       </button>
+       {/* UI Controls */}
+       <div className="absolute top-4 inset-x-4 flex justify-between items-center z-50 pointer-events-none">
+         <div className="bg-black/50 text-white text-xs px-3 py-1.5 rounded-full backdrop-blur-sm pointer-events-auto">
+           {currentIndex + 1} / {images.length}
+         </div>
+         <button 
+            onClick={onClose}
+            className="p-2 text-white/70 hover:text-white transition-colors bg-black/50 rounded-full pointer-events-auto"
+         >
+           <X className="w-8 h-8" />
+         </button>
+       </div>
+       
+       {/* Desktop Navigation Arrows */}
+       {currentIndex > 0 && zoom === 1 && (
+         <button 
+           onClick={handlePrev}
+           className="hidden md:flex absolute left-4 top-1/2 -translate-y-1/2 p-4 text-white/50 hover:text-white transition-colors z-50 bg-black/20 hover:bg-black/40 rounded-full"
+         >
+           <ChevronLeft className="w-10 h-10" />
+         </button>
+       )}
+       {currentIndex < images.length - 1 && zoom === 1 && (
+         <button 
+           onClick={handleNext}
+           className="hidden md:flex absolute right-4 top-1/2 -translate-y-1/2 p-4 text-white/50 hover:text-white transition-colors z-50 bg-black/20 hover:bg-black/40 rounded-full"
+         >
+           <ChevronRight className="w-10 h-10" />
+         </button>
+       )}
        
        <img 
-         src={src} 
+         key={currentSrc}
+         src={currentSrc} 
          alt="Full size"
          draggable={false}
          className="transition-transform duration-200 ease-out max-w-full max-h-full object-contain select-none"
@@ -71,11 +160,13 @@ const Lightbox = ({ src, onClose }: { src: string, onClose: () => void }) => {
          onMouseDown={handleMouseDown}
        />
        
-       {zoom === 1 && (
-         <div className="absolute bottom-10 bg-black/50 text-white text-xs px-3 py-1 rounded-full pointer-events-none">
-           Double click to zoom
-         </div>
-       )}
+       <div className="absolute bottom-10 flex flex-col items-center gap-2 pointer-events-none">
+          {zoom === 1 && (
+            <div className="bg-black/50 text-white text-xs px-3 py-1 rounded-full whitespace-nowrap">
+              {window.matchMedia('(pointer: coarse)').matches ? 'Swipe to browse • Double tap to zoom' : 'Arrows to browse • Double click to zoom'}
+            </div>
+          )}
+       </div>
     </div>
   );
 };
@@ -125,7 +216,6 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
 
   return (
     <div className="mt-2 flex flex-col items-start gap-2">
-      {/* Image Container */}
       <div className="relative inline-block rounded-lg overflow-hidden bg-black/20 border border-gray-700 group">
         <img 
           src={src} 
@@ -134,7 +224,6 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
           onClick={() => onEnlarge(src)}
         />
         
-        {/* Quick Actions (Download/Favorite) - Kept as overlays for a cleaner look */}
         <div className="absolute top-2 right-2 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           <button 
             onClick={handleDownload}
@@ -153,7 +242,6 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
         </div>
       </div>
 
-      {/* External Action Bar */}
       <div className="flex gap-2">
         <button
           onClick={handleGenerateClick}
@@ -209,12 +297,42 @@ export const Chat: React.FC = () => {
   
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [enlargedSrc, setEnlargedSrc] = useState<string | null>(null);
+  const [enlargedIndex, setEnlargedIndex] = useState<number | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const clientId = useRef(uuidv4());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load the active profile
+  const activeProfile = useLiveQuery(() => 
+    settings?.activeProfileId ? db.workflowProfiles.get(settings.activeProfileId) : null
+  , [settings]);
+
+  // Derive list of all images for the lightbox
+  const imageMessages = useMemo(() => {
+    return (messages || []).filter(m => m.imageBlob || m.imageUrl);
+  }, [messages]);
+
+  // Handle object URL lifecycle for images in the gallery
+  const imageSrcs = useMemo(() => {
+    return imageMessages.map(m => {
+      if (m.imageBlob) {
+        return URL.createObjectURL(m.imageBlob);
+      }
+      return m.imageUrl || '';
+    });
+  }, [imageMessages]);
+
+  useEffect(() => {
+    return () => {
+      imageSrcs.forEach(src => {
+        if (src.startsWith('blob:')) {
+          URL.revokeObjectURL(src);
+        }
+      });
+    };
+  }, [imageSrcs]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -264,7 +382,7 @@ export const Chat: React.FC = () => {
                  } catch (err) {
                    await db.messages.add({
                       role: 'bot',
-                      content: 'Image generated but failed to download. Check console.',
+                      content: 'Image generated but failed to download.',
                       imageUrl: fullUrl,
                       timestamp: Date.now(),
                       status: 'error'
@@ -292,10 +410,10 @@ export const Chat: React.FC = () => {
 
   const handleSend = async (promptText: string) => {
     if (!promptText.trim()) return;
-    if (!settings) return;
+    if (!settings || !activeProfile) return;
 
-    const { apiHost, workflowJson, authToken, seedMode, lastSeed } = settings;
-    const workflow = parseWorkflow(workflowJson);
+    const { apiHost, authToken, seedMode, lastSeed } = settings;
+    const workflow = parseWorkflow(activeProfile.workflowJson);
     if (!workflow) return;
 
     await db.messages.add({
@@ -317,7 +435,6 @@ export const Chat: React.FC = () => {
         lastSeed || 0
       );
       
-      // Update the last seed in the database
       await db.settings.update(1, { lastSeed: appliedSeed });
 
       const baseUrl = getBaseUrl(apiHost);
@@ -385,7 +502,7 @@ export const Chat: React.FC = () => {
     return (
       <div className="flex flex-col h-full bg-[#313338] items-center justify-center p-6 text-center">
         <div className="bg-[#2b2d31] p-8 rounded-lg shadow-lg max-w-md">
-           <Settings className="w-16 h-16 text-indigo-400 mx-auto mb-4" />
+           <Layout className="w-16 h-16 text-indigo-400 mx-auto mb-4" />
            <h2 className="text-xl font-bold text-white mb-2">Setup Required</h2>
            <p className="text-gray-400 mb-6">Configure ComfyUI in Settings to start.</p>
         </div>
@@ -396,9 +513,9 @@ export const Chat: React.FC = () => {
   return (
     <div className="flex flex-col h-full bg-[#313338]">
       <div className="h-12 border-b border-[#26272d] flex items-center justify-between px-4 bg-[#313338] shadow-sm flex-shrink-0">
-         <div className="flex items-center gap-2 text-gray-200 font-bold">
-            <Hash className="w-5 h-5 text-gray-400" />
-            <span>general</span>
+         <div className="flex items-center gap-2 text-gray-200 font-bold overflow-hidden">
+            <Hash className="w-5 h-5 text-gray-400 flex-shrink-0" />
+            <span className="truncate" title={activeProfile?.name}>{activeProfile?.name || 'general'}</span>
          </div>
          <button 
            onClick={() => db.messages.clear()}
@@ -432,7 +549,10 @@ export const Chat: React.FC = () => {
                      blob={msg.imageBlob} url={msg.imageUrl} alt="Generated"
                      onFavorite={() => handleFavorite(msg)}
                      onGenerateMore={() => msg.id && handleGenerateMore(msg.id)}
-                     onEnlarge={setEnlargedSrc}
+                     onEnlarge={() => {
+                       const index = imageMessages.findIndex(m => m.id === msg.id);
+                       if (index !== -1) setEnlargedIndex(index);
+                     }}
                    />
                 )}
               </div>
@@ -452,7 +572,6 @@ export const Chat: React.FC = () => {
 
       <div className="p-3 md:p-4 bg-[#383a40] flex-shrink-0 border-t border-[#26272d]">
         <div className="bg-[#404249] rounded-lg p-2 flex items-end gap-2">
-          {/* Quick toggle for seed mode */}
           <button 
             onClick={toggleSeedMode}
             className="p-2 text-gray-400 hover:text-white transition-colors"
@@ -485,7 +604,13 @@ export const Chat: React.FC = () => {
         </div>
       </div>
 
-      {enlargedSrc && <Lightbox src={enlargedSrc} onClose={() => setEnlargedSrc(null)} />}
+      {enlargedIndex !== null && (
+        <Lightbox 
+          images={imageSrcs} 
+          initialIndex={enlargedIndex} 
+          onClose={() => setEnlargedIndex(null)} 
+        />
+      )}
     </div>
   );
 };
