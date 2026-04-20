@@ -314,6 +314,7 @@ export const Chat: React.FC = () => {
   const clientId = useRef(uuidv4());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const currentImageFilename = useRef<string>('');
 
   // Derive list of all images for the lightbox
   const imageMessages = useMemo(() => {
@@ -391,6 +392,7 @@ export const Chat: React.FC = () => {
                       role: 'bot',
                       content: 'Image generated but failed to download. Check console.',
                       imageUrl: fullUrl,
+                      imageFilename: currentImageFilename.current,
                       timestamp: Date.now(),
                       status: 'error'
                    });
@@ -433,8 +435,8 @@ export const Chat: React.FC = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleSend = async (promptText: string) => {
-    if (!promptText.trim() && !imageFile) return;
+  const handleSend = async (promptText: string, reusedImageFilename?: string) => {
+    if (!promptText.trim() && !imageFile && !reusedImageFilename) return;
     if (!settings) return;
 
     const { apiHost, workflowJson, authToken, seedMode, lastSeed } = settings;
@@ -442,20 +444,23 @@ export const Chat: React.FC = () => {
     if (!workflow) return;
 
     setIsGenerating(true);
-    let imageFilename = '';
+    let imageFilename = reusedImageFilename || '';
 
     try {
-      // 1. Upload image if exists
-      if (imageFile) {
+      // 1. Upload image if exists and not reusing
+      if (imageFile && !reusedImageFilename) {
         const uploadRes = await uploadImage(apiHost, imageFile, authToken);
         imageFilename = uploadRes.name;
       }
+      
+      currentImageFilename.current = imageFilename;
 
       // Add user message with image if present
       await db.messages.add({
         role: 'user',
         content: promptText,
         imageBlob: imageFile || undefined,
+        imageFilename: imageFilename || undefined,
         timestamp: Date.now(),
         status: 'complete'
       });
@@ -503,13 +508,15 @@ export const Chat: React.FC = () => {
     const msgIndex = messages.findIndex(m => m.id === msgId);
     if (msgIndex === -1) return;
     let prompt = "";
+    let imageFilename = "";
     for (let i = msgIndex - 1; i >= 0; i--) {
       if (messages[i].role === 'user') {
         prompt = messages[i].content;
+        imageFilename = messages[i].imageFilename || "";
         break;
       }
     }
-    if (prompt) await handleSend(prompt);
+    if (prompt || imageFilename) await handleSend(prompt, imageFilename);
   };
 
   const handleFavorite = async (msg: ChatMessage) => {

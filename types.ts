@@ -14,6 +14,7 @@ export interface ChatMessage {
   content: string; // Text prompt or status message
   imageUrl?: string; // If it's a generated image
   imageBlob?: Blob; // For permanent storage if needed
+  imageFilename?: string; // The filename used in ComfyUI workflow
   timestamp: number;
   originalPrompt?: string; // To "Generate More"
   status?: 'pending' | 'loading' | 'complete' | 'error';
