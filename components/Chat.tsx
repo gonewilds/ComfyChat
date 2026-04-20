@@ -4,7 +4,7 @@ import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Setti
 import { useLiveQuery } from 'dexie-react-hooks';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
-import { parseWorkflow, prepareWorkflow, getImageUrl, getBaseUrl } from '../utils/comfyHelper';
+import { parseWorkflow, prepareWorkflow, getImageUrl, getBaseUrl, uploadImage } from '../utils/comfyHelper';
 import { ChatMessage, Settings as SettingsType } from '../types';
 
 // --- Components ---
@@ -170,13 +170,14 @@ const Lightbox = ({ images, initialIndex, onClose }: { images: string[], initial
   );
 };
 
-const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge }: { 
+const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge, isBot = true }: { 
   blob?: Blob, 
   url?: string, 
   alt: string,
   onFavorite: () => void,
   onGenerateMore: () => void,
-  onEnlarge: (src: string) => void
+  onEnlarge: (src: string) => void,
+  isBot?: boolean
 }) => {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
 
@@ -244,15 +245,17 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge 
       </div>
 
       {/* External Action Bar */}
-      <div className="flex gap-2">
-        <button
-          onClick={handleGenerateClick}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded shadow transition-all active:scale-95 font-medium"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Generate More
-        </button>
-      </div>
+      {isBot && (
+        <div className="flex gap-2">
+          <button
+            onClick={handleGenerateClick}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded shadow transition-all active:scale-95 font-medium"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Generate More
+          </button>
+        </div>
+      )}
     </div>
   );
 });
@@ -300,11 +303,14 @@ export const Chat: React.FC = () => {
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [enlargedIndex, setEnlargedIndex] = useState<number | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const clientId = useRef(uuidv4());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Derive list of all images for the lightbox
   const imageMessages = useMemo(() => {
@@ -406,31 +412,61 @@ export const Chat: React.FC = () => {
     }
   }, [input]);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const clearImage = () => {
+    setImageFile(null);
+    setImagePreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleSend = async (promptText: string) => {
-    if (!promptText.trim()) return;
+    if (!promptText.trim() && !imageFile) return;
     if (!settings) return;
 
     const { apiHost, workflowJson, authToken, seedMode, lastSeed } = settings;
     const workflow = parseWorkflow(workflowJson);
     if (!workflow) return;
 
-    await db.messages.add({
-      role: 'user',
-      content: promptText,
-      timestamp: Date.now(),
-      status: 'complete'
-    });
-    
-    setInput('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setIsGenerating(true);
+    let imageFilename = '';
 
     try {
+      // 1. Upload image if exists
+      if (imageFile) {
+        const uploadRes = await uploadImage(apiHost, imageFile, authToken);
+        imageFilename = uploadRes.name;
+      }
+
+      // Add user message with image if present
+      await db.messages.add({
+        role: 'user',
+        content: promptText,
+        imageBlob: imageFile || undefined,
+        timestamp: Date.now(),
+        status: 'complete'
+      });
+      
+      setInput('');
+      clearImage();
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+
       const { workflow: promptWorkflow, appliedSeed } = prepareWorkflow(
         workflow, 
         promptText, 
         seedMode || 'random', 
-        lastSeed || 0
+        lastSeed || 0,
+        imageFilename
       );
       
       // Update the last seed in the database
@@ -545,7 +581,8 @@ export const Chat: React.FC = () => {
                 {msg.content && <MessageBubble role={msg.role} content={msg.content} />}
                 {(msg.imageBlob || msg.imageUrl) && (
                    <ChatImage 
-                     blob={msg.imageBlob} url={msg.imageUrl} alt="Generated"
+                     blob={msg.imageBlob} url={msg.imageUrl} alt={msg.role === 'user' ? 'Upload' : 'Generated'}
+                     isBot={msg.role === 'bot'}
                      onFavorite={() => handleFavorite(msg)}
                      onGenerateMore={() => msg.id && handleGenerateMore(msg.id)}
                      onEnlarge={() => {
@@ -570,7 +607,38 @@ export const Chat: React.FC = () => {
       </div>
 
       <div className="p-3 md:p-4 bg-[#383a40] flex-shrink-0 border-t border-[#26272d]">
+        {imagePreview && (
+          <div className="px-1 pb-3">
+            <div className="relative inline-block group">
+              <img src={imagePreview} className="h-24 w-auto max-w-xs object-contain rounded-md border-2 border-indigo-500/50 shadow-lg" />
+              <button 
+                onClick={clearImage}
+                className="absolute -top-2 -right-2 bg-red-500 rounded-full p-1 text-white shadow-md hover:bg-red-600 transition-colors"
+                title="Remove image"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
         <div className="bg-[#404249] rounded-lg p-2 flex items-end gap-2">
+          {/* Hidden File Input */}
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileChange} 
+            className="hidden" 
+            accept="image/*"
+          />
+          
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className={`p-2 transition-colors ${imageFile ? 'text-indigo-400' : 'text-gray-400 hover:text-white'}`}
+            title="Upload Image"
+          >
+            <PlusCircle className="w-6 h-6" />
+          </button>
+
           {/* Quick toggle for seed mode */}
           <button 
             onClick={toggleSeedMode}

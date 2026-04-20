@@ -18,13 +18,15 @@ export const parseWorkflow = (jsonString: string): ComfyWorkflow | null => {
 /**
  * 1. Injects the prompt into the workflow by replacing the placeholder.
  * 2. Handles seed logic (Random vs Increment).
+ * 3. Injects image filename into LoadImage nodes if provided.
  * Returns both the modified workflow and the seed that was applied.
  */
 export const prepareWorkflow = (
   workflow: ComfyWorkflow, 
   prompt: string, 
   seedMode: 'random' | 'increment', 
-  lastSeed: number
+  lastSeed: number,
+  imageFilename?: string
 ): { workflow: ComfyWorkflow, appliedSeed: number } => {
   const workflowString = JSON.stringify(workflow);
   // Simple string replacement for the prompt
@@ -42,18 +44,45 @@ export const prepareWorkflow = (
     if (appliedSeed > 9007199254740991) appliedSeed = 0;
   }
 
-  // Inject seed into all relevant fields
+  // Inject seed and images into all relevant fields
   Object.values(newWorkflow).forEach((node: any) => {
     if (node.inputs) {
+      // Inject seed
       for (const key in node.inputs) {
         if (key === 'seed' || key === 'noise_seed') {
           node.inputs[key] = appliedSeed;
         }
       }
+      
+      // Inject image into LoadImage nodes
+      if (node.class_type === 'LoadImage' && imageFilename) {
+        node.inputs.image = imageFilename;
+      }
     }
   });
 
   return { workflow: newWorkflow, appliedSeed };
+};
+
+export const uploadImage = async (host: string, file: File, authToken?: string): Promise<{name: string, subfolder: string, type: string}> => {
+  const baseUrl = getBaseUrl(host);
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const headers: Record<string, string> = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+  const response = await fetch(`${baseUrl}/upload/image`, {
+    method: 'POST',
+    body: formData,
+    headers: headers
+  });
+
+  if (!response.ok) {
+    throw new Error(`Upload failed: ${response.statusText}`);
+  }
+
+  return response.json();
 };
 
 export const getBaseUrl = (host: string): string => {
