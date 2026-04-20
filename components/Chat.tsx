@@ -170,12 +170,13 @@ const Lightbox = ({ images, initialIndex, onClose }: { images: string[], initial
   );
 };
 
-const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge, isBot = true, isThumbnail = false }: { 
+const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEdit, onEnlarge, isBot = true, isThumbnail = false }: { 
   blob?: Blob, 
   url?: string, 
   alt: string,
   onFavorite: () => void,
   onGenerateMore: () => void,
+  onEdit: () => void,
   onEnlarge: (src: string) => void,
   isBot?: boolean,
   isThumbnail?: boolean
@@ -257,6 +258,13 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge,
             <RefreshCw className="w-3.5 h-3.5" />
             Generate More
           </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            className="flex items-center gap-2 bg-[#404249] hover:bg-[#4e5058] text-white text-xs px-3 py-1.5 rounded shadow transition-all active:scale-95 font-medium border border-[#4e5058]"
+          >
+            <Hash className="w-3.5 h-3.5" />
+            Edit Prompt
+          </button>
         </div>
       )}
     </div>
@@ -308,6 +316,7 @@ export const Chat: React.FC = () => {
   const [enlargedIndex, setEnlargedIndex] = useState<number | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [reusedImageFilename, setReusedImageFilename] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -432,11 +441,13 @@ export const Chat: React.FC = () => {
   const clearImage = () => {
     setImageFile(null);
     setImagePreview(null);
+    setReusedImageFilename(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleSend = async (promptText: string, reusedImageFilename?: string) => {
-    if (!promptText.trim() && !imageFile && !reusedImageFilename) return;
+  const handleSend = async (promptText: string, imageFilenameParam?: string) => {
+    const finalImageFilename = imageFilenameParam || reusedImageFilename;
+    if (!promptText.trim() && !imageFile && !finalImageFilename) return;
     if (!settings) return;
 
     const { apiHost, workflowJson, authToken, seedMode, lastSeed } = settings;
@@ -444,11 +455,11 @@ export const Chat: React.FC = () => {
     if (!workflow) return;
 
     setIsGenerating(true);
-    let imageFilename = reusedImageFilename || '';
+    let imageFilename = finalImageFilename || '';
 
     try {
       // 1. Upload image if exists and not reusing
-      if (imageFile && !reusedImageFilename) {
+      if (imageFile && !finalImageFilename) {
         const uploadRes = await uploadImage(apiHost, imageFile, authToken);
         imageFilename = uploadRes.name;
       }
@@ -517,6 +528,40 @@ export const Chat: React.FC = () => {
       }
     }
     if (prompt || imageFilename) await handleSend(prompt, imageFilename);
+  };
+
+  const handleEditPrompt = async (msgId: number) => {
+    if (!messages) return;
+    const msgIndex = messages.findIndex(m => m.id === msgId);
+    if (msgIndex === -1) return;
+    let prompt = "";
+    let imageFilename = "";
+    let imageBlob: Blob | undefined = undefined;
+
+    for (let i = msgIndex - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        prompt = messages[i].content;
+        imageFilename = messages[i].imageFilename || "";
+        imageBlob = messages[i].imageBlob;
+        break;
+      }
+    }
+    
+    setInput(prompt);
+    if (imageFilename) {
+      setReusedImageFilename(imageFilename);
+      if (imageBlob) {
+        setImagePreview(URL.createObjectURL(imageBlob));
+      }
+    } else {
+      clearImage();
+    }
+    
+    if (textareaRef.current) {
+       setTimeout(() => {
+         if (textareaRef.current) textareaRef.current.focus();
+       }, 50);
+    }
   };
 
   const handleFavorite = async (msg: ChatMessage) => {
@@ -597,6 +642,7 @@ export const Chat: React.FC = () => {
                      isThumbnail={true}
                      onFavorite={() => handleFavorite(msg)}
                      onGenerateMore={() => msg.id && handleGenerateMore(msg.id)}
+                     onEdit={() => msg.id && handleEditPrompt(msg.id)}
                      onEnlarge={() => {
                        const index = imageMessages.findIndex(m => m.id === msg.id);
                        if (index !== -1) setEnlargedIndex(index);
@@ -614,6 +660,7 @@ export const Chat: React.FC = () => {
                      isThumbnail={false}
                      onFavorite={() => handleFavorite(msg)}
                      onGenerateMore={() => msg.id && handleGenerateMore(msg.id)}
+                     onEdit={() => msg.id && handleEditPrompt(msg.id)}
                      onEnlarge={() => {
                        const index = imageMessages.findIndex(m => m.id === msg.id);
                        if (index !== -1) setEnlargedIndex(index);
