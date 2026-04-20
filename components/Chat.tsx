@@ -170,14 +170,15 @@ const Lightbox = ({ images, initialIndex, onClose }: { images: string[], initial
   );
 };
 
-const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge, isBot = true }: { 
+const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge, isBot = true, isThumbnail = false }: { 
   blob?: Blob, 
   url?: string, 
   alt: string,
   onFavorite: () => void,
   onGenerateMore: () => void,
   onEnlarge: (src: string) => void,
-  isBot?: boolean
+  isBot?: boolean,
+  isThumbnail?: boolean
 }) => {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
 
@@ -215,37 +216,39 @@ const ChatImage = memo(({ blob, url, alt, onFavorite, onGenerateMore, onEnlarge,
   if (!src) return null;
 
   return (
-    <div className="mt-2 flex flex-col items-start gap-2">
+    <div className={`${isThumbnail ? 'mt-1 mb-1' : 'mt-2'} flex flex-col ${isThumbnail ? 'items-end' : 'items-start'} gap-2`}>
       {/* Image Container */}
-      <div className="relative inline-block rounded-lg overflow-hidden bg-black/20 border border-gray-700 group">
+      <div className={`relative inline-block rounded-lg overflow-hidden bg-black/20 border border-gray-700 group hover:border-gray-500 transition-colors ${isThumbnail ? 'shadow-sm' : ''}`}>
         <img 
           src={src} 
           alt={alt} 
-          className="max-w-full md:max-w-sm lg:max-w-md h-auto block cursor-zoom-in"
+          className={`${isThumbnail ? 'h-20 w-auto max-w-[120px]' : 'max-w-full md:max-w-sm lg:max-w-md h-auto'} block cursor-zoom-in object-cover`}
           onClick={() => onEnlarge(src)}
         />
         
-        {/* Quick Actions (Download/Favorite) - Kept as overlays for a cleaner look */}
-        <div className="absolute top-2 right-2 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-          <button 
-            onClick={handleDownload}
-            className="bg-black/50 hover:bg-gray-700 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
-            title="Download"
-          >
-            <Download className="w-5 h-5" />
-          </button>
-          <button 
-            onClick={handleFavoriteClick}
-            className="bg-black/50 hover:bg-yellow-500/80 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
-            title="Add to Favorites"
-          >
-            <Star className="w-5 h-5" />
-          </button>
-        </div>
+        {/* Quick Actions (Download/Favorite) - Only for full images */}
+        {!isThumbnail && (
+          <div className="absolute top-2 right-2 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+            <button 
+              onClick={handleDownload}
+              className="bg-black/50 hover:bg-gray-700 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
+              title="Download"
+            >
+              <Download className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={handleFavoriteClick}
+              className="bg-black/50 hover:bg-yellow-500/80 p-1.5 rounded text-white backdrop-blur-sm transition-colors"
+              title="Add to Favorites"
+            >
+              <Star className="w-5 h-5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* External Action Bar */}
-      {isBot && (
+      {isBot && !isThumbnail && (
         <div className="flex gap-2">
           <button
             onClick={handleGenerateClick}
@@ -578,11 +581,30 @@ export const Chat: React.FC = () => {
                   <span className="font-semibold text-white">{msg.role === 'user' ? 'You' : 'ComfyBot'}</span>
                   <span className="text-xs text-gray-400">{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                 </div>
-                {msg.content && <MessageBubble role={msg.role} content={msg.content} />}
-                {(msg.imageBlob || msg.imageUrl) && (
+                
+                {/* User uploaded image as thumbnail BEFORE the prompt */}
+                {msg.role === 'user' && (msg.imageBlob || msg.imageUrl) && (
                    <ChatImage 
-                     blob={msg.imageBlob} url={msg.imageUrl} alt={msg.role === 'user' ? 'Upload' : 'Generated'}
-                     isBot={msg.role === 'bot'}
+                     blob={msg.imageBlob} url={msg.imageUrl} alt="Upload"
+                     isBot={false} 
+                     isThumbnail={true}
+                     onFavorite={() => handleFavorite(msg)}
+                     onGenerateMore={() => msg.id && handleGenerateMore(msg.id)}
+                     onEnlarge={() => {
+                       const index = imageMessages.findIndex(m => m.id === msg.id);
+                       if (index !== -1) setEnlargedIndex(index);
+                     }}
+                   />
+                )}
+
+                {msg.content && <MessageBubble role={msg.role} content={msg.content} />}
+                
+                {/* Bot generated image AFTER the prompt */}
+                {msg.role === 'bot' && (msg.imageBlob || msg.imageUrl) && (
+                   <ChatImage 
+                     blob={msg.imageBlob} url={msg.imageUrl} alt="Generated"
+                     isBot={true}
+                     isThumbnail={false}
                      onFavorite={() => handleFavorite(msg)}
                      onGenerateMore={() => msg.id && handleGenerateMore(msg.id)}
                      onEnlarge={() => {
