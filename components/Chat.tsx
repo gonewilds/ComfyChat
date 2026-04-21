@@ -449,9 +449,17 @@ export const Chat: React.FC = () => {
   const handleSend = async (promptText: string, imageFilenameParam?: string) => {
     const finalImageFilename = imageFilenameParam || reusedImageFilename;
     if (!promptText.trim() && !imageFile && !finalImageFilename) return;
-    if (!settings) return;
+    if (!settings || !settings.activeProfileId) {
+      alert("Please select a workflow profile in Settings first.");
+      return;
+    }
 
-    const { apiHost, workflowJson, authToken, seedMode, lastSeed } = settings;
+    const profile = await db.profiles.get(settings.activeProfileId);
+    if (!profile) return;
+
+    const { apiHost, authToken } = settings;
+    const { workflowJson, seedMode, lastSeed } = profile;
+    
     const workflow = parseWorkflow(workflowJson);
     if (!workflow) return;
 
@@ -474,6 +482,7 @@ export const Chat: React.FC = () => {
         imageBlob: imageFile || undefined,
         imageFilename: imageFilename || undefined,
         timestamp: Date.now(),
+        profileId: profile.id,
         status: 'complete'
       });
       
@@ -490,7 +499,7 @@ export const Chat: React.FC = () => {
       );
       
       // Update the last seed in the database
-      await db.settings.update(1, { lastSeed: appliedSeed });
+      await db.profiles.update(profile.id!, { lastSeed: appliedSeed });
 
       const baseUrl = getBaseUrl(apiHost);
       const url = `${baseUrl}/prompt`;
@@ -580,12 +589,6 @@ export const Chat: React.FC = () => {
       await db.favorites.add({ prompt, imageBlob: msg.imageBlob, timestamp: Date.now() });
       alert("Added to gallery!");
     }
-  };
-
-  const toggleSeedMode = async () => {
-    if (!settings) return;
-    const nextMode = settings.seedMode === 'random' ? 'increment' : 'random';
-    await db.settings.update(1, { seedMode: nextMode });
   };
 
   const handleDownloadAll = async () => {
@@ -753,15 +756,6 @@ export const Chat: React.FC = () => {
             title="Upload Image"
           >
             <PlusCircle className="w-6 h-6" />
-          </button>
-
-          {/* Quick toggle for seed mode */}
-          <button 
-            onClick={toggleSeedMode}
-            className="p-2 text-gray-400 hover:text-white transition-colors"
-            title={`Current Seed Mode: ${settings.seedMode || 'random'}. Click to toggle.`}
-          >
-            {settings.seedMode === 'increment' ? <PlusCircle className="w-6 h-6 text-indigo-400" /> : <Dices className="w-6 h-6" />}
           </button>
           
           <textarea
