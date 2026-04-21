@@ -1,17 +1,19 @@
 import Dexie, { Table } from 'dexie';
-import { ChatMessage, FavoriteItem, Settings } from './types';
+import { ChatMessage, FavoriteItem, Settings, WorkflowProfile } from './types';
 
 export class ComfyChatDB extends Dexie {
   messages!: Table<ChatMessage, number>;
   favorites!: Table<FavoriteItem, number>;
   settings!: Table<Settings, number>;
+  profiles!: Table<WorkflowProfile, number>;
 
   constructor() {
     super('ComfyChatDB');
-    (this as any).version(1).stores({
+    (this as any).version(2).stores({
       messages: '++id, timestamp',
       favorites: '++id, timestamp',
-      settings: 'id' // 'id' (not auto-increment) so we can keep updating row 1
+      settings: 'id',
+      profiles: '++id, name, timestamp'
     });
   }
 }
