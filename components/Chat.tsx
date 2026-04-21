@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState, memo, useMemo, useCallback } from '
 import { Send, RefreshCw, Star, Image as ImageIcon, Loader2, Trash2, Hash, Settings, Download, X, Dices, PlusCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { v4 as uuidv4 } from 'uuid';
+import JSZip from 'jszip';
 import { db } from '../db';
 import { parseWorkflow, prepareWorkflow, getImageUrl, getBaseUrl, uploadImage } from '../utils/comfyHelper';
 import { ChatMessage, Settings as SettingsType } from '../types';
@@ -587,6 +588,36 @@ export const Chat: React.FC = () => {
     await db.settings.update(1, { seedMode: nextMode });
   };
 
+  const handleDownloadAll = async () => {
+    if (!messages) return;
+    const imagesToDownload = messages.filter(m => m.imageBlob);
+    if (imagesToDownload.length === 0) {
+      alert("No images to download.");
+      return;
+    }
+
+    const zip = new JSZip();
+    const folder = zip.folder("comfychat-images");
+
+    imagesToDownload.forEach((msg, index) => {
+      if (msg.imageBlob) {
+        const extension = msg.imageBlob.type.split('/')[1] || 'png';
+        const filename = `image-${index + 1}-${msg.timestamp}.${extension}`;
+        folder?.file(filename, msg.imageBlob);
+      }
+    });
+
+    const content = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `comfychat-export-${Date.now()}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   if (settingsArray === undefined) return null;
   if (!settings) {
     return (
@@ -607,13 +638,22 @@ export const Chat: React.FC = () => {
             <Hash className="w-5 h-5 text-gray-400" />
             <span>general</span>
          </div>
-         <button 
-           onClick={() => db.messages.clear()}
-           className="text-gray-400 hover:text-red-400 transition-colors"
-           title="Clear Chat History"
-         >
-           <Trash2 className="w-5 h-5" />
-         </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={handleDownloadAll}
+              className="text-gray-400 hover:text-indigo-400 transition-colors"
+              title="Download All Images (ZIP)"
+            >
+              <Download className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => db.messages.clear()}
+              className="text-gray-400 hover:text-red-400 transition-colors"
+              title="Clear Chat History"
+            >
+              <Trash2 className="w-5 h-5" />
+            </button>
+          </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6 min-h-0">
