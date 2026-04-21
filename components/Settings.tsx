@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { db } from '../db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Save, AlertCircle, Wifi, CheckCircle, XCircle, Key, Dices, PlusCircle } from 'lucide-react';
+import { Save, AlertCircle, Wifi, CheckCircle, XCircle, Key, Dices, PlusCircle, Trash2, Edit3, Settings as SettingsIcon } from 'lucide-react';
 import { getBaseUrl } from '../utils/comfyHelper';
 
 const DEFAULT_WORKFLOW = `{
@@ -67,33 +67,85 @@ const DEFAULT_WORKFLOW = `{
 
 export const SettingsPanel: React.FC = () => {
   const settings = useLiveQuery(() => db.settings.get(1));
+  const profiles = useLiveQuery(() => db.profiles.orderBy('timestamp').toArray());
   
   // Local state
   const [apiHost, setApiHost] = useState('127.0.0.1:8188');
   const [authToken, setAuthToken] = useState('');
-  const [workflow, setWorkflow] = useState(DEFAULT_WORKFLOW);
   const [seedMode, setSeedMode] = useState<'random' | 'increment'>('random');
   const [lastSeed, setLastSeed] = useState<number>(0);
   
+  // Profile management
+  const [activeProfileId, setActiveProfileId] = useState<number | undefined>(undefined);
+  const [editingProfileId, setEditingProfileId] = useState<number | null>(null);
+  const [profileName, setProfileName] = useState('');
+  const [workflow, setWorkflow] = useState(DEFAULT_WORKFLOW);
+
   // UI states
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
 
+  // Handle migration/initial profile creation
+  useEffect(() => {
+    const init = async () => {
+      const existingSettings = await db.settings.get(1);
+      const profileCount = await db.profiles.count();
+      
+      if (profileCount === 0 && existingSettings?.workflowJson) {
+        // Migrate existing workflow to a "Default" profile
+        await db.profiles.add({
+          name: 'Default Workflow',
+          workflowJson: existingSettings.workflowJson,
+          timestamp: Date.now()
+        });
+        const firstProfile = await db.profiles.toCollection().first();
+        if (firstProfile?.id) {
+          await db.settings.update(1, { activeProfileId: firstProfile.id });
+        }
+      } else if (profileCount === 0) {
+        // Create a fresh default profile
+        const id = await db.profiles.add({
+          name: 'Standard v1.5',
+          workflowJson: DEFAULT_WORKFLOW,
+          timestamp: Date.now()
+        });
+        await db.settings.update(1, { activeProfileId: id });
+      }
+    };
+    init();
+  }, []);
+
   // Load settings on mount
   useEffect(() => {
     if (settings) {
       setApiHost(settings.apiHost);
-      setWorkflow(settings.workflowJson);
       setAuthToken(settings.authToken || '');
       setSeedMode(settings.seedMode || 'random');
       setLastSeed(settings.lastSeed || 0);
+      setActiveProfileId(settings.activeProfileId);
     }
   }, [settings]);
+
+  // Load active profile data
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (activeProfileId) {
+        const p = await db.profiles.get(activeProfileId);
+        if (p) {
+          setWorkflow(p.workflowJson);
+          setProfileName(p.name);
+          setEditingProfileId(p.id || null);
+        }
+      }
+    };
+    loadProfile();
+  }, [activeProfileId]);
 
   const saveToDb = useCallback(async () => {
     setSaveStatus('saving');
     try {
+      // Validate workflow JSON
       try {
         JSON.parse(workflow);
       } catch (e) {
@@ -104,14 +156,24 @@ export const SettingsPanel: React.FC = () => {
       let cleanHost = apiHost.trim();
       if (cleanHost.endsWith('/')) cleanHost = cleanHost.slice(0, -1);
 
+      // Save Global Settings
       await db.settings.put({
         id: 1,
         apiHost: cleanHost,
-        workflowJson: workflow,
+        workflowJson: workflow, // Keep for fallback/legacy compatibility
+        activeProfileId,
         authToken: authToken.trim(),
         seedMode: seedMode,
         lastSeed: lastSeed
       });
+
+      // Save Profile Data
+      if (editingProfileId) {
+        await db.profiles.update(editingProfileId, {
+          name: profileName || 'Unnamed Profile',
+          workflowJson: workflow
+        });
+      }
 
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -119,7 +181,32 @@ export const SettingsPanel: React.FC = () => {
       console.error("Failed to save", e);
       setSaveStatus('idle');
     }
-  }, [apiHost, workflow, authToken, seedMode, lastSeed]);
+  }, [apiHost, workflow, authToken, seedMode, lastSeed, activeProfileId, editingProfileId, profileName]);
+
+  const handleAddNewProfile = async () => {
+    const id = await db.profiles.add({
+      name: 'New Workflow Profile',
+      workflowJson: DEFAULT_WORKFLOW,
+      timestamp: Date.now()
+    });
+    setActiveProfileId(id);
+    setSaveStatus('saved');
+    setTimeout(() => setSaveStatus('idle'), 2000);
+  };
+
+  const handleDeleteProfile = async (id: number) => {
+    if (profiles && profiles.length <= 1) {
+      alert("You must have at least one workflow profile.");
+      return;
+    }
+    if (confirm("Delete this profile?")) {
+      await db.profiles.delete(id);
+      if (activeProfileId === id) {
+        const next = await db.profiles.toCollection().first();
+        if (next?.id) setActiveProfileId(next.id);
+      }
+    }
+  };
 
   const handleBlur = () => {
     saveToDb();
@@ -241,22 +328,77 @@ export const SettingsPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Workflow Configuration */}
-        <div>
-          <label className="block text-gray-300 text-sm font-bold mb-2">Workflow API JSON</label>
-          <div className="bg-yellow-900/30 border border-yellow-700/50 p-3 rounded mb-2 flex items-start gap-2">
-            <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-yellow-200">
-              Export your workflow in <strong>API Format</strong>. Replace your prompt text with <code>%PROMPT%</code>.
-            </p>
+        {/* Workflow Profiles Management */}
+        <div className="border-t border-gray-700 pt-6">
+          <div className="flex justify-between items-center mb-4">
+            <label className="block text-gray-300 text-sm font-bold">Workflow Profiles</label>
+            <button
+              onClick={handleAddNewProfile}
+              className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors"
+            >
+              <PlusCircle className="w-3.5 h-3.5" /> Add Profile
+            </button>
           </div>
-          <textarea
-            value={workflow}
-            onChange={(e) => setWorkflow(e.target.value)}
-            onBlur={handleBlur}
-            spellCheck={false}
-            className="w-full bg-[#1e1f22] text-gray-300 font-mono text-xs border border-[#1e1f22] rounded py-2 px-3 h-80 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
+          
+          <div className="flex flex-wrap gap-2 mb-6">
+            {profiles?.map((p) => (
+              <div 
+                key={p.id}
+                className={`flex items-center gap-2 px-3 py-2 rounded-md border transition-all cursor-pointer group ${
+                  activeProfileId === p.id 
+                    ? 'bg-indigo-500/20 border-indigo-500 text-white' 
+                    : 'bg-[#1e1f22] border-transparent text-gray-400 hover:bg-gray-700'
+                }`}
+                onClick={() => setActiveProfileId(p.id)}
+              >
+                <SettingsIcon className={`w-3.5 h-3.5 ${activeProfileId === p.id ? 'text-indigo-400' : 'text-gray-500'}`} />
+                <span className="text-sm font-medium">{p.name}</span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (p.id) handleDeleteProfile(p.id);
+                  }}
+                  className="ml-1 opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-4 bg-[#1e1f22] p-4 rounded-lg">
+            <div>
+              <label className="block text-gray-400 text-xs font-bold mb-1 uppercase tracking-wider">Profile Name</label>
+              <input
+                type="text"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+                onBlur={handleBlur}
+                className="w-full bg-[#2b2d31] text-white border border-[#2b2d31] rounded py-2 px-3 focus:outline-none focus:border-indigo-500 transition-colors"
+                placeholder="Name your workflow (e.g. SDXL High Res)"
+              />
+            </div>
+
+            <div>
+              <label className="block text-gray-400 text-xs font-bold mb-1 uppercase tracking-wider flex justify-between">
+                <span>Workflow API JSON</span>
+                <span className="text-indigo-400 normal-case lowercase font-normal italic">Selected: {profiles?.find(p => p.id === activeProfileId)?.name}</span>
+              </label>
+              <div className="bg-yellow-900/10 border border-yellow-700/20 p-3 rounded mb-2 flex items-start gap-2">
+                <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-yellow-200/70 italic">
+                  Changes to the JSON below will be saved directly to the <strong>"{profileName}"</strong> profile.
+                </p>
+              </div>
+              <textarea
+                value={workflow}
+                onChange={(e) => setWorkflow(e.target.value)}
+                onBlur={handleBlur}
+                spellCheck={false}
+                className="w-full bg-[#2b2d31] text-gray-300 font-mono text-xs border border-[#2b2d31] rounded py-2 px-3 h-80 focus:outline-none focus:border-indigo-500 transition-colors"
+              />
+            </div>
+          </div>
         </div>
 
         <button
