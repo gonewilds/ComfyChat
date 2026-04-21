@@ -1,16 +1,8 @@
 
-export interface WorkflowProfile {
-  id?: number;
-  name: string;
-  workflowJson: string;
-  timestamp: number;
-}
-
 export interface Settings {
   id?: number;
   apiHost: string; // e.g., "127.0.0.1:8188"
-  workflowJson: string; // Legacy/Default raw JSON string
-  activeProfileId?: number; // Currently selected workflow profile
+  workflowJson: string; // The raw JSON string
   authToken?: string; // Vast.ai Bearer token
   seedMode: 'random' | 'increment';
   lastSeed: number;

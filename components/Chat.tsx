@@ -311,9 +311,6 @@ export const Chat: React.FC = () => {
   const messages = useLiveQuery(() => db.messages.orderBy('timestamp').toArray());
   const settingsArray = useLiveQuery(() => db.settings.toArray());
   const settings = settingsArray?.[0];
-  const activeProfile = useLiveQuery(() => 
-    settings?.activeProfileId ? db.profiles.get(settings.activeProfileId) : undefined
-  , [settings?.activeProfileId]);
   
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -454,16 +451,7 @@ export const Chat: React.FC = () => {
     if (!promptText.trim() && !imageFile && !finalImageFilename) return;
     if (!settings) return;
 
-    // Get the active workflow from profiles
-    let workflowJson = settings.workflowJson;
-    if (settings.activeProfileId) {
-      const profile = await db.profiles.get(settings.activeProfileId);
-      if (profile) {
-        workflowJson = profile.workflowJson;
-      }
-    }
-
-    const { apiHost, authToken, seedMode, lastSeed } = settings;
+    const { apiHost, workflowJson, authToken, seedMode, lastSeed } = settings;
     const workflow = parseWorkflow(workflowJson);
     if (!workflow) return;
 
@@ -646,15 +634,10 @@ export const Chat: React.FC = () => {
   return (
     <div className="flex flex-col h-full bg-[#313338]">
       <div className="h-12 border-b border-[#26272d] flex items-center justify-between px-4 bg-[#313338] shadow-sm flex-shrink-0">
-         <div className="flex items-center gap-2 text-gray-200 font-bold overflow-hidden">
-            <Hash className="w-5 h-5 text-gray-400 flex-shrink-0" />
-            <span className="truncate">general</span>
-            {activeProfile && (
-              <span className="hidden sm:inline text-[10px] font-normal text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20 truncate max-w-[150px] uppercase tracking-wider">
-                {activeProfile.name}
-              </span>
-            )}
-          </div>
+         <div className="flex items-center gap-2 text-gray-200 font-bold">
+            <Hash className="w-5 h-5 text-gray-400" />
+            <span>general</span>
+         </div>
           <div className="flex items-center gap-2">
             <button 
               onClick={handleDownloadAll}
