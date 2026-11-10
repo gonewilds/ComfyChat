@@ -493,6 +493,7 @@ export const Chat: React.FC = () => {
     };
 
     connect();
+    void updateGeneratingState();
     void recoverPendingPrompts();
     const pollTimer = setInterval(() => void recoverPendingPrompts(), 4000);
 
