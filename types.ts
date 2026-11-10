@@ -25,6 +25,7 @@ export interface ChatMessage {
   imageFilename?: string; // The filename used in ComfyUI workflow
   timestamp: number;
   originalPrompt?: string; // To "Generate More"
+  promptId?: string; // ComfyUI job ID used to recover interrupted generations
   status?: 'pending' | 'loading' | 'complete' | 'error';
 }
 
