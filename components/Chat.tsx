@@ -367,7 +367,7 @@ export const Chat: React.FC = () => {
     const { apiHost, authToken } = settings;
     const baseUrl = getBaseUrl(apiHost);
     const wsProtocol = baseUrl.startsWith('https') ? 'wss' : 'ws';
-    const hostWithoutProtocol = baseUrl.replace(/^https?:\\/\\//, '');
+    const hostWithoutProtocol = baseUrl.replace(/^https?:\/\//, '');
     let wsUrl = `${wsProtocol}://${hostWithoutProtocol}/ws?clientId=${clientId.current}`;
     if (authToken) wsUrl += `&token=${encodeURIComponent(authToken)}`;
 
