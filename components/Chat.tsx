@@ -367,59 +367,144 @@ export const Chat: React.FC = () => {
     const { apiHost, authToken } = settings;
     const baseUrl = getBaseUrl(apiHost);
     const wsProtocol = baseUrl.startsWith('https') ? 'wss' : 'ws';
-    const hostWithoutProtocol = baseUrl.replace(/^https?:\/\//, '');
+    const hostWithoutProtocol = baseUrl.replace(/^https?:\\/\\//, '');
     let wsUrl = `${wsProtocol}://${hostWithoutProtocol}/ws?clientId=${clientId.current}`;
     if (authToken) wsUrl += `&token=${encodeURIComponent(authToken)}`;
 
+    let disposed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let reconnectDelay = 1000;
+    const recovering = new Set<string>();
+
+    const updateGeneratingState = async () => {
+      const allMessages = await db.messages.toArray();
+      const hasPending = allMessages.some(message =>
+        message.promptId && (message.status === 'pending' || message.status === 'loading')
+      );
+      if (!disposed) setIsGenerating(hasPending);
+    };
+
+    const recoverPrompt = async (promptId: string) => {
+      if (!promptId || recovering.has(promptId) || disposed) return;
+      recovering.add(promptId);
+      try {
+        const headers: Record<string, string> = {};
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        const historyResponse = await fetch(`${baseUrl}/history/${encodeURIComponent(promptId)}`, { headers });
+        if (!historyResponse.ok) return;
+        const history = await historyResponse.json();
+        const job = history?.[promptId];
+        if (!job || job.status?.completed !== true) return;
+
+        const allMessages = await db.messages.toArray();
+        const pendingMessage = allMessages.find(message => message.promptId === promptId);
+        if (!pendingMessage?.id) return;
+
+        const images = Object.values(job.outputs || {}).flatMap((output: any) =>
+          Array.isArray(output?.images) ? output.images : []
+        );
+        if (images.length === 0) {
+          await db.messages.update(pendingMessage.id, {
+            content: 'Generation completed, but ComfyUI returned no images.',
+            status: 'error'
+          });
+          await updateGeneratingState();
+          return;
+        }
+
+        const downloaded: Array<{ url: string; blob: Blob }> = [];
+        for (const image of images) {
+          const imageUrl = getImageUrl(apiHost, image.filename, image.subfolder || '', image.type || 'output');
+          const imageResponse = await fetch(imageUrl, { headers });
+          if (!imageResponse.ok) throw new Error(`Image download failed: ${imageResponse.status}`);
+          downloaded.push({ url: imageUrl, blob: await imageResponse.blob() });
+        }
+
+        await db.messages.update(pendingMessage.id, {
+          content: '',
+          imageUrl: downloaded[0].url,
+          imageBlob: downloaded[0].blob,
+          imageFilename: images[0].filename,
+          status: 'complete'
+        });
+        for (let index = 1; index < downloaded.length; index++) {
+          await db.messages.add({
+            role: 'bot',
+            content: '',
+            imageUrl: downloaded[index].url,
+            imageBlob: downloaded[index].blob,
+            imageFilename: images[index].filename,
+            timestamp: Date.now() + index,
+            status: 'complete'
+          });
+        }
+        await updateGeneratingState();
+      } catch (error) {
+        console.warn(`Could not recover ComfyUI prompt ${promptId}; it will be retried.`, error);
+      } finally {
+        recovering.delete(promptId);
+      }
+    };
+
+    const recoverPendingPrompts = async () => {
+      const allMessages = await db.messages.toArray();
+      const pendingIds = allMessages
+        .filter(message => message.promptId && (message.status === 'pending' || message.status === 'loading'))
+        .map(message => message.promptId as string);
+      await Promise.all(pendingIds.map(recoverPrompt));
+    };
+
     const connect = () => {
-      if (wsRef.current) wsRef.current.close();
+      if (disposed) return;
       try {
         const ws = new WebSocket(wsUrl);
-        ws.onmessage = async (event) => {
+        wsRef.current = ws;
+        ws.onopen = () => {
+          reconnectDelay = 1000;
+          void recoverPendingPrompts();
+        };
+        ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === 'executing' && data.data.node === null) {
-              setIsGenerating(false);
+            const promptId = data?.data?.prompt_id;
+            if (promptId && (
+              data.type === 'executed' ||
+              (data.type === 'executing' && data.data.node === null)
+            )) {
+              void recoverPrompt(promptId);
             }
-            if (data.type === 'executed') {
-               const images = data.data.output.images;
-               if (images && images.length > 0) {
-                 const imgData = images[0];
-                 const fullUrl = getImageUrl(apiHost, imgData.filename, imgData.subfolder, imgData.type);
-                 try {
-                   const headers: Record<string, string> = {};
-                   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-                   const res = await fetch(fullUrl, { headers });
-                   if (!res.ok) throw new Error(`Image fetch failed`);
-                   const blob = await res.blob();
-                   await db.messages.add({
-                     role: 'bot',
-                     content: '',
-                     imageUrl: fullUrl,
-                     imageBlob: blob,
-                     timestamp: Date.now(),
-                     status: 'complete',
-                   });
-                 } catch (err) {
-                   await db.messages.add({
-                      role: 'bot',
-                      content: 'Image generated but failed to download. Check console.',
-                      imageUrl: fullUrl,
-                      imageFilename: currentImageFilename.current,
-                      timestamp: Date.now(),
-                      status: 'error'
-                   });
-                 }
-               }
-            }
-          } catch (e) {}
+          } catch (error) {
+            console.warn('Could not process ComfyUI WebSocket message.', error);
+          }
         };
-        wsRef.current = ws;
-      } catch (e) {}
+        ws.onclose = () => {
+          if (wsRef.current === ws) wsRef.current = null;
+          if (disposed) return;
+          reconnectTimer = setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+        };
+        ws.onerror = () => ws.close();
+      } catch (error) {
+        if (!disposed) {
+          reconnectTimer = setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+        }
+      }
     };
+
     connect();
+    void recoverPendingPrompts();
+    const pollTimer = setInterval(() => void recoverPendingPrompts(), 4000);
+
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      disposed = true;
+      clearInterval(pollTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
   }, [settings]);
 
@@ -470,6 +555,8 @@ export const Chat: React.FC = () => {
     setIsGenerating(true);
     let imageFilename = finalImageFilename || '';
 
+    let pendingMessageId: number | undefined;
+
     try {
       // 1. Upload image if exists and not reusing
       if (imageFile && !finalImageFilename) {
@@ -488,7 +575,13 @@ export const Chat: React.FC = () => {
         timestamp: Date.now(),
         status: 'complete'
       });
-      
+      pendingMessageId = await db.messages.add({
+        role: 'bot',
+        content: '',
+        timestamp: Date.now() + 1,
+        status: 'pending'
+      });
+
       setInput('');
       clearImage();
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -516,13 +609,29 @@ export const Chat: React.FC = () => {
         body: JSON.stringify(body)
       });
       if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
+      const responseData = await res.json();
+      if (!responseData?.prompt_id) throw new Error('ComfyUI did not return a prompt_id.');
+      if (pendingMessageId !== undefined) {
+        await db.messages.update(pendingMessageId, {
+          promptId: responseData.prompt_id,
+          status: 'loading'
+        });
+      }
     } catch (e) {
-      await db.messages.add({
-        role: 'bot',
-        content: `Error: ${(e as Error).message}`,
-        timestamp: Date.now(),
-        status: 'error'
-      });
+      const errorMessage = `Error: ${(e as Error).message}`;
+      if (pendingMessageId !== undefined) {
+        await db.messages.update(pendingMessageId, {
+          content: errorMessage,
+          status: 'error'
+        });
+      } else {
+        await db.messages.add({
+          role: 'bot',
+          content: errorMessage,
+          timestamp: Date.now(),
+          status: 'error'
+        });
+      }
       setIsGenerating(false);
     }
   };
